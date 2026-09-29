@@ -1,0 +1,7 @@
+node_modules/
+.firecrawl/
+overrides.live.toml
+*.tmp-*
+__pycache__/
+.superpowers/
+docs/superpowers/

@@ -1,0 +1,206 @@
+{
+  "schema": 1,
+  "updated": "2026-09-28",
+  "defaults": {
+    "context": 131072,
+    "max_output": 16384
+  },
+  "fallbacks": {
+    "free_escape_order": [
+      "gemma-4-31b-llmlb",
+      "mistral-small-4-llmlb",
+      "glm-5.2-llmlb"
+    ],
+    "max_targets": 4,
+    "context_hub": "openai/gpt-5.6-llmlb"
+  },
+  "exclude": [
+    "gpt-oss-120b-llmlb",
+    "openai/gpt-5.4-llmlb",
+    "standard-chat-ufr",
+    "standard-reasoning-ufr",
+    "standard-bild-ufr"
+  ],
+  "aliases": {
+    "gpt-5.6-llmlb": "openai/gpt-5.6-llmlb",
+    "gpt-5.6-sol-llmlb": "openai/gpt-5.6-sol-llmlb",
+    "gpt-5.6-terra-llmlb": "openai/gpt-5.6-terra-llmlb",
+    "mistral-large-latest-llmlb": "mistral/mistral-large-latest-llmlb",
+    "codestral-latest-llmlb": "mistral/codestral-latest-llmlb"
+  },
+  "models": {
+    "glm-5.2-llmlb": {
+      "context": 1048576,
+      "price": {
+        "input": 0.4,
+        "output": 0.4
+      }
+    },
+    "glm-5.3-flash-llmlb": {
+      "context": 1048576,
+      "price": {
+        "input": 0.4,
+        "output": 0.4
+      },
+      "note": "portal-measured 2026-09-28: 100 267 input tokens moved a test key 1.58% -> 1.78% of $20 (= $0.40/Mtok)"
+    },
+    "gemma-4-31b-llmlb": {
+      "context": 262144
+    },
+    "gemma-4-12b-llmlb": {
+      "context": 131072
+    },
+    "gemma-3-27b-llmlb": {
+      "context": 128000
+    },
+    "gpt-oss-120b-llmlb": {
+      "context": 128000
+    },
+    "mistral-small-4-llmlb": {
+      "context": 256000
+    },
+    "qwen-3.5-397b-llmlb": {
+      "context": 262144
+    },
+    "qwen-3.6-27b-llmlb": {
+      "context": 262144
+    },
+    "qwen-3.8-27b-llmlb": {
+      "context": 262144
+    },
+    "qwen3.5-9b-llmlb": {
+      "context": 128000
+    },
+    "nuextract3-llmlb": {
+      "context": 131072,
+      "tools": false
+    },
+    "numarkdown-8b-thinking-llmlb": {
+      "context": 24768,
+      "tools": false
+    },
+    "standard-chat-ufr": {
+      "context": 262144
+    },
+    "standard-coding-ufr": {
+      "context": 1048576,
+      "price": {
+        "input": 0.4,
+        "output": 0.4
+      }
+    },
+    "standard-reasoning-ufr": {
+      "context": 262144,
+      "price": {
+        "input": 0.1,
+        "output": 0.1
+      }
+    },
+    "standard-bild-ufr": {
+      "context": 262144
+    },
+    "ufr/chat": {
+      "context": 262144,
+      "vision": true
+    },
+    "ufr/chat-fast": {
+      "context": 131044
+    },
+    "ufr/chat-standard": {
+      "context": 262144
+    },
+    "ufr/coding-complex": {
+      "context": 1048576,
+      "vision": false,
+      "price": {
+        "input": 0.4,
+        "output": 0.4
+      }
+    },
+    "ufr/coding-fast": {
+      "context": 262144,
+      "vision": true
+    },
+    "ufr/reasoning-complex": {
+      "context": 262144,
+      "price": {
+        "input": 0.1,
+        "output": 0.1
+      }
+    },
+    "ufr/reasoning-fast": {
+      "context": 262144
+    },
+    "ufr/text": {
+      "context": 256000
+    },
+    "ufr/vision-complex": {
+      "context": 262144
+    },
+    "ufr/vision-fast": {
+      "context": 131044
+    },
+    "ufr/vision-standard": {
+      "context": 262144
+    },
+    "openai/gpt-5.6-llmlb": {
+      "context": 1050000,
+      "price": {
+        "input": 0.2,
+        "output": 1.2,
+        "cache_read": 0.02,
+        "cache_write": 0.25
+      }
+    },
+    "openai/gpt-5.6-sol-llmlb": {
+      "context": 922000,
+      "price": {
+        "input": 5,
+        "output": 30,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    "openai/gpt-5.6-terra-llmlb": {
+      "context": 1000000,
+      "price": {
+        "input": 2,
+        "output": 12,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      }
+    },
+    "openai/gpt-5.4-llmlb": {
+      "context": 272000,
+      "price": {
+        "input": 2.5,
+        "output": 15,
+        "cache_read": 0.25,
+        "cache_write": 3.125
+      }
+    },
+    "openai/gpt-5.3-codex-llmlb": {
+      "context": 1000000,
+      "price": {
+        "input": 1.75,
+        "output": 14,
+        "cache_read": 0.175,
+        "cache_write": 2.1875
+      }
+    },
+    "mistral/mistral-large-latest-llmlb": {
+      "context": 262144,
+      "price": {
+        "input": 2,
+        "output": 6
+      }
+    },
+    "mistral/codestral-latest-llmlb": {
+      "context": 128000,
+      "price": {
+        "input": 0.3,
+        "output": 0.9
+      }
+    }
+  }
+}
