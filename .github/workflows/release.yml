@@ -36,9 +36,10 @@ jobs:
   publish:
     needs: verify
     runs-on: ubuntu-latest
-    # Approval happens on npm's side: the package is staged (`npm stage
-    # publish`, OIDC trusted publishing — no stored token) and goes live after
-    # the maintainer approves it with 2FA on npmjs.com → Staged Packages.
+    # The environment name is part of the OIDC claim npm's trusted-publisher
+    # config expects — but this GitHub environment has no reviewer gate: the
+    # only approval happens on npm's side (staged publish + 2FA).
+    environment: npm
     permissions:
       id-token: write # OIDC trusted publishing — no NPM_TOKEN needed
       contents: read
