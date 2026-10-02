@@ -10,6 +10,11 @@ import { toModelInfo } from "./model-info"
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../daemon/main.ts", import.meta.url))
 
+// opencode takes a request's key from the provider's integration (default: the one with the provider's
+// id), and a key credential there replaces settings.apiKey. The /connect credential on "unifreiburg"
+// holds the UFR keys, not the gateway token — so link the provider to an integration with no credential.
+const GATEWAY_INTEGRATION_ID = "opencode-ufr-gateway"
+
 function log(msg: string): void {
   console.warn(`[opencode-ufr] ${msg}`)
 }
@@ -58,6 +63,7 @@ async function registerProvider(
       info: {
         id: providerId,
         name: providerName,
+        integrationID: GATEWAY_INTEGRATION_ID,
         activation: "enabled",
         package: "@opencode/ai/providers/openai-compatible",
         settings: { baseURL: `http://127.0.0.1:${conn.port}/v1`, apiKey: conn.token },

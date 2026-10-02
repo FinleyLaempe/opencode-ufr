@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { UFR_INTEGRATION_ID } from "../../src/plugin/connect"
 import { ensureDaemon, isNewer } from "../../src/plugin/ensure-daemon"
 import { heartbeat, default as plugin } from "../../src/plugin/index"
 import { VERSION } from "../../src/shared/version"
@@ -118,5 +119,22 @@ describe("plugin setup: connection gating", () => {
     const ctx = { integration: { connection: { active: async () => undefined } } }
     await heartbeat(ctx, env.paths)
     expect(await Bun.file(env.paths.daemonFile).exists()).toBe(false)
+  })
+})
+
+describe("plugin setup: provider key", () => {
+  test("the provider is not linked to the /connect integration, so opencode sends the gateway token", async () => {
+    env = await daemonEnv()
+    const d = await env.start()
+    process.env.OPENCODE_UFR_HOME = env.home
+    const added: any[] = []
+    const ctx = { provider: { transform: async (fn: (editor: any) => void) => fn({ add: (x: any) => added.push(x) }) } }
+    const cleanup = await plugin.setup(ctx)
+    if (typeof cleanup === "function") cleanup()
+    const info = added[0].info
+    // opencode takes a request's key from connection.active(info.integrationID ?? info.id); a key credential
+    // there replaces settings.apiKey — on "unifreiburg" that is the user's UFR key list, which the gateway rejects.
+    expect(info.integrationID ?? info.id).not.toBe(UFR_INTEGRATION_ID)
+    expect(info.settings.apiKey).toBe(d.token)
   })
 })
