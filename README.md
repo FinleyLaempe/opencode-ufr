@@ -1,71 +1,100 @@
 # opencode-ufr
 
-An [opencode](https://opencode.ai) provider for Uni Freiburg's Open WebUI
-models. A small local gateway runs on your machine, pools your UFR API
+An [opencode](https://opencode.ai) provider for **Uni Freiburg's Open WebUI
+models**. A small local gateway runs on your machine, pools your UFR API
 key(s), and handles UFR's rate limits and outages so opencode doesn't have to.
+Off campus, it connects through the uni's Fortinet VPN **by itself** — with no
+TUN device, no admin rights and no external tools.
 
-## Requirements
-
-- opencode ≥ 2.0
-- A UFR account and API key (Open WebUI → Settings → Account → API keys)
-- [Bun](https://bun.sh) on your `PATH` for the `ufr` CLI. The plugin itself
-  needs no Bun — it runs inside opencode.
-- Off campus, the **built-in VPN** connects to UFR on its own: store your uni
-  login once (`ufr login add <user>`) and the plugin tunnels its UFR calls
-  through `fortivpn.uni-freiburg.de` — with no TUN device, no admin rights, no
-  openconnect and no changes to your routing. Your own VPNs keep working
-  untouched in parallel. See the RZ guide if you prefer a system VPN:
-  https://wiki.uni-freiburg.de/rz/doku.php?id=vpn
+```
+opencode ⇄ gateway (127.0.0.1) ⇄ [Fortinet tunnel] ⇄ openwebui.uni-freiburg.de
+                    │
+                    ├─ key pool (1…n UFR accounts)
+                    ├─ rate-limit pacing, circuit breakers, fallbacks
+                    └─ VPN when off campus (userspace TCP/IP stack)
+```
 
 ## Install
 
-Not on npm yet — install straight from GitHub:
+```bash
+bun add -g opencode-ufr              # puts `ufr` on PATH
+opencode plugin add opencode-ufr     # registers the plugin
+```
+
+(or add `"plugins": ["opencode-ufr"]` to your `opencode.json` manually.)
+
+## Setup
+
+**Inside opencode — the normal way:** open `/connect`, pick **Uni Freiburg**,
+and fill in:
+
+| Field | Needed? |
+|---|---|
+| **API keys** | always — paste one key per UFR account, comma-separated (whitespace is filtered) |
+| **Uni login** | only off campus — e.g. `fl240@uni-freiburg.de`, empty on the uni network |
+| **Uni password** | only with a login above |
+
+Submitted credentials land in your OS keyring (never on disk), the gateway
+restarts with them, and the `unifreiburg/…` models appear in the model picker.
+
+**In a terminal — the fallback:** works before opencode ever starts.
 
 ```bash
-bun add -g github:FinleyLaempe/opencode-ufr   # puts `ufr` on PATH
-ufr connect
+ufr connect --keys "<key1>,<key2>"                                 # keys only
+ufr connect --login fl240@uni-freiburg.de --password … --keys "…"   # + VPN login
 ```
 
-`ufr connect` asks for your UFR API key(s) — comma-separated, whitespace
-around keys is filtered, aliases (key1, key2, …) are assigned automatically —
-and optionally your uni login for the built-in VPN. Everything is verified
-against UFR and stored in the OS keyring (never on disk).
-
-Inside opencode you never need the CLI: the plugin takes over the built-in
-`/connect` panel's **Uni Freiburg** entry. It shows the API-key(s) field plus
-**Uni login (optional)** and **Uni password (optional)** — both only needed on
-a machine outside the uni network, where the built-in VPN uses them. Submitted
-credentials land in the OS keyring automatically and the gateway restarts with
-them.
-
-Manual alternative — add to `opencode.json`:
-
-```json
-{ "plugins": ["github:FinleyLaempe/opencode-ufr"] }
-```
-
-or run `opencode plugin add github:FinleyLaempe/opencode-ufr` yourself, then
-`ufr connect --keys "<key1>,<key2>"`.
-
-npm publication is planned; once it lands, `bunx opencode-ufr …` /
-`npx opencode-ufr …` will work without a global install.
+`ufr connect` verifies every key against UFR, assigns aliases (`key1`, `key2`,
+…) automatically and accepts keys comma- or line-separated.
 
 ## Use
 
 Models show up in opencode as `unifreiburg/<model>`, e.g.
-`unifreiburg/ufr/coding-complex`. Everything else is the CLI:
+`unifreiburg/ufr/coding-complex` or `unifreiburg/glm-5.3-flash-llmlb`. The
+gateway starts itself the first time opencode needs it (the plugin waits up to
+40 s) and shuts down after 5 minutes idle. You never manage it directly.
 
 ```bash
-ufr status       # gateway, keys, limits, breakers, spend today
+ufr status       # gateway, keys, limits, breakers, vpn, spend today
 ufr stats        # requests, tokens and cost
-ufr keys test    # check your stored keys against UFR
-ufr keys list    # aliases
+ufr keys list    # stored aliases
+ufr keys test    # check your keys against UFR
 ufr login show   # the stored uni login
 ```
 
-The gateway starts itself the first time opencode needs it (the plugin waits
-up to 40 s for it to come up) and shuts down again after 5 minutes idle. You
-don't run or manage it directly.
+## The built-in VPN
+
+On the campus network (or the VPN you already run) UFR is reached directly and
+no tunnel opens. Off campus, the gateway:
+
+1. logs in to `fortivpn.uni-freiburg.de` with your stored uni login (TLS),
+2. negotiates PPP/IPCP over the Fortinet SSL-VPN channel (this is the same
+   protocol `openconnect --protocol=fortinet` speaks, implemented in pure
+   TypeScript — see `docs/fortinet-protocol.md`),
+3. runs a **userspace TCP/IP stack inside the gateway process** and routes its
+   UFR calls through it via a localhost CONNECT proxy.
+
+What that means in practice:
+
+- **No TUN device, no routing table changes, no admin rights** — identical
+  code on Linux, macOS and Windows.
+- **Your own VPNs keep working untouched in parallel** — the plugin's tunnel
+  exists only inside its own process and rides on whatever network the OS
+  provides.
+- **Everything is encrypted twice**: the tunnel itself is TLS 1.3, and your
+  API calls are HTTPS end-to-end to `openwebui.uni-freiburg.de` inside it.
+- `vpn.mode: "auto"` (default) only tunnels when UFR is unreachable directly;
+  `"always"` forces the tunnel (useful behind firewalls that block the campus
+  route).
+- If the tunnel dies, it reconnects with backoff — no session is lost, the
+  gateway just waits until the path is back.
+
+## More than one key
+
+UFR allows one API key per account, so one key is one account's worth of
+throughput. The key pool round-robins across all stored keys and keeps each
+under UFR's per-key limits; adding more keys only helps if they belong to
+different UFR accounts.
 
 ## What the gateway does
 
@@ -74,12 +103,6 @@ don't run or manage it directly.
 - Enforces a pool-wide cap of 800 requests/hour across all keys and models —
   UFR walls a model group for hours once it sees sustained traffic above
   roughly 900/hour.
-- **Connects to UFR on its own when you are off campus.** It logs in to the
-  uni's Fortinet gateway with your stored uni login, negotiates PPP/IPCP and
-  runs a userspace TCP/IP stack inside the gateway process: no TUN device, no
-  routes, no admin rights, identical on Linux, macOS and Windows. On campus it
-  talks to UFR directly and never opens the tunnel; `vpn.mode: "always"`
-  forces the tunnel.
 - Runs a circuit breaker per model: after repeated failures it backs off from
   30 s up to 60 minutes before probing again, instead of hammering a walled
   model.
@@ -97,15 +120,10 @@ don't run or manage it directly.
   unclean shutdown, the next start detects it's stale and takes it over
   rather than refusing to start.
 
-## More than one key
-
-UFR allows one API key per account, so one key is one account's worth of
-throughput. Adding more keys only helps if they belong to different UFR
-accounts — it does not raise any one account's limit.
-
 ## Configuration
 
-Non-secret settings live in a JSON file; keys always stay in the OS keyring.
+Non-secret settings live in a JSON file; keys and the uni login always stay in
+the OS keyring.
 
 - **Linux / macOS:** `~/.config/opencode-ufr/config.json` (state in
   `~/.local/state/opencode-ufr`, cache in `~/.cache/opencode-ufr`, data in
@@ -152,9 +170,14 @@ except `port`, which is written on first start):
 
 `port` is chosen once (preferred `47300`, next free port if taken) and then
 stays fixed across restarts. `poolPerHour: 0` disables the pool limiter.
-`transport.type: "direct"` never opens the tunnel; `"auto"` (the default)
-tunnels only when UFR is not reachable directly. `vpn.mode: "always"` tunnels
-every UFR call, useful behind firewalls that block the campus route.
+`transport.type: "direct"` never opens the tunnel.
+
+## Releases
+
+Releases are tag-driven: `scripts/release.sh 0.2.1` bumps, commits, tags and
+pushes; the workflow then verifies on Ubuntu, macOS and Windows, stages the
+package on npm (trusted publishing via OIDC — no stored tokens), and creates
+the GitHub release after a maintainer approves the staged version with 2FA.
 
 ## Model data
 
