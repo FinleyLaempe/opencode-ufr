@@ -40,6 +40,18 @@ function fakeGateway(o: { status: number; body: string; cookie?: string }) {
   return { server, calls, url: `http://127.0.0.1:${server.port}` }
 }
 
+/** Accepts connections and never answers — a gateway behind a route that just went away. */
+function silentGateway() {
+  const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } })
+  listeners.push(listener)
+  return { url: `http://127.0.0.1:${listener.port}` }
+}
+let listeners: { stop(force?: boolean): void }[] = []
+afterEach(() => {
+  for (const l of listeners) l.stop(true)
+  listeners = []
+})
+
 const NO_CREDENTIALS = null
 const CREDS = { user: "fl240@uni-freiburg.de", pass: "pw" }
 const LOG = () => {}
@@ -69,6 +81,31 @@ describe("VpnManager", () => {
     expect(m.status.mode).toBe("failed")
     expect(m.status.detail).toContain("rejected the login")
     expect(gw.calls.some((c) => c.path === "/remote/logincheck")).toBe(true)
+  })
+
+  test("a gateway that stops answering fails the attempt instead of wedging every later call (regression: own VPN toggled)", async () => {
+    const ufr = fakeUfr({ type: "html" })
+    const gw = silentGateway()
+    const m = new VpnManager({ gateway: gw.url, upstreamHost: "x", baseUrl: ufr.url, credentials: CREDS, log: LOG, loginTimeoutMs: 200 })
+    try {
+      expect(await m.ensurePath()).toBe("failed")
+      expect(m.status.detail).toContain("did not answer")
+    } finally {
+      await m.stop()
+    }
+  })
+
+  test("a caller's abort ends its wait for the tunnel", async () => {
+    const ufr = fakeUfr({ type: "html" })
+    const gw = silentGateway()
+    const m = new VpnManager({ gateway: gw.url, upstreamHost: "x", baseUrl: ufr.url, credentials: CREDS, log: LOG, loginTimeoutMs: 60_000 })
+    try {
+      const t0 = performance.now()
+      await expect(m.transport().fetch(`${ufr.url}/models`, { signal: AbortSignal.timeout(100) })).rejects.toThrow()
+      expect(performance.now() - t0).toBeLessThan(2_000)
+    } finally {
+      await m.stop()
+    }
   })
 
   test("mode always skips the direct check entirely", async () => {

@@ -388,9 +388,10 @@ export class PppSession {
     this.nextId = (this.nextId + 1) & 0xff || 1
   }
 
-  /** Send an IPv4 datagram into the tunnel (protocol 0x0021). */
+  /** Send an IPv4 datagram into the tunnel (protocol 0x0021). A dead link drops it, like a
+   *  downed interface: teardown sends RSTs from timers and socket handlers, where a throw kills the daemon. */
   sendIp(datagram: Uint8Array): void {
-    if (this.dead) throw new Error("ppp link is dead")
+    if (this.dead) return
     this.ev.sendPpp(pppFrame(PPP_IP, datagram))
   }
 

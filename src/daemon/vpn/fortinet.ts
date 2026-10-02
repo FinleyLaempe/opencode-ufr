@@ -126,10 +126,15 @@ export async function authenticate(o: {
   fetch?: typeof fetch
   on2fa?: (challenge: { kind: string; message: string }) => Promise<string> // returns the OTP ("" = FTM push)
   log?: (msg: string) => void
+  /** Deadline for the whole login. Without one a gateway that stops answering stalls it forever. */
+  signal?: AbortSignal
 }): Promise<AuthOutcome> {
   const f = o.fetch ?? fetch
   const log = o.log ?? (() => {})
   const base = o.gateway.replace(/\/$/, "")
+  // Fresh connections only: a pooled socket opened before the user's own VPN changed
+  // the route is dead, and a request on it is never answered.
+  const net = { keepalive: false, signal: o.signal }
 
   // 1. GET / — follow redirects manually (fetch drops intermediate Set-Cookies),
   //    keep the cookie jar: FortiOS binds the logincheck to the login-page session.
@@ -137,7 +142,7 @@ export async function authenticate(o: {
   let jar = ""
   let url = `${base}/`
   for (let hops = 0; hops < 5; hops++) {
-    const res = await f(url, { headers: { "User-Agent": FORTI_UA, ...(jar ? { Cookie: jar } : {}) }, redirect: "manual" })
+    const res = await f(url, { headers: { "User-Agent": FORTI_UA, ...(jar ? { Cookie: jar } : {}) }, redirect: "manual", ...net })
     jar = cookiesFrom(res, jar)
     const body = await res.text().catch(() => "")
     if (res.status >= 300 && res.status < 400) {
@@ -170,6 +175,7 @@ export async function authenticate(o: {
       },
       body: formEncode(body),
       redirect: "manual",
+      ...net,
     })
 
   let res = await post({ username: o.user, credential: o.pass, realm, ajax: "1", just_logged_in: "1" })
@@ -449,6 +455,8 @@ export async function openTunnel(o: {
       await fetch(`${o.gateway.replace(/\/$/, "")}/remote/logout`, {
         headers: { "User-Agent": FORTI_UA, Cookie: o.cookie },
         redirect: "manual",
+        keepalive: false,
+        signal: AbortSignal.timeout(5_000), // a reconnect and the daemon's shutdown wait for this
       })
     } catch { /* best effort */ }
   }

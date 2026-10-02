@@ -152,6 +152,32 @@ describe("authenticate", () => {
     server.stop(true)
   })
 
+  test("every login request opens a fresh connection (regression: a pooled socket that died with the old route stalled the reconnect)", async () => {
+    // Answers the first request on each TCP connection, then goes silent on it —
+    // what a kept-alive socket looks like after the user's own VPN changed the route.
+    const answered = new WeakSet<object>()
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(s, chunk) {
+          if (answered.has(s)) return
+          answered.add(s)
+          const login = new TextDecoder().decode(chunk).startsWith("POST /remote/logincheck")
+          s.write(login
+            ? "HTTP/1.1 200 OK\r\nSet-Cookie: SVPNCOOKIE=fresh; path=/\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
+            : "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+        },
+      },
+    })
+    try {
+      const r = await authenticate({ gateway: `http://127.0.0.1:${server.port}`, user: "u", pass: "p", signal: AbortSignal.timeout(3_000) })
+      expect(r.cookie).toBe("SVPNCOOKIE=fresh")
+    } finally {
+      server.stop(true)
+    }
+  })
+
   test("without on2fa a token challenge is a clear error", async () => {
     const server = Bun.serve({
       port: 0,

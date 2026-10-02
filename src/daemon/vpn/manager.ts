@@ -29,6 +29,7 @@ export type VpnState = {
 
 const DIRECT_CHECK_CACHE_MS = 60_000
 const ESTABLISH_TIMEOUT_MS = 30_000
+const LOGIN_TIMEOUT_MS = 15_000
 const RECONNECT_BASE_MS = 5_000
 const RECONNECT_MAX_MS = 10 * 60_000
 
@@ -58,6 +59,8 @@ export class VpnManager {
       log: (msg: string) => void
       /** Outgoing direct-leg fetch (injectable for tests). */
       fetch?: FetchFn
+      /** Deadline for the gateway login (default 15 s). */
+      loginTimeoutMs?: number
     },
     private readonly now: () => number = Date.now,
   ) {
@@ -74,7 +77,7 @@ export class VpnManager {
     return {
       name: "vpn",
       fetch: async (url, init) => {
-        const path = await this.ensurePath()
+        const path = await untilAborted(this.ensurePath(), init?.signal)
         if (path === "vpn" && this.proxy) {
           return await fetch(url, { ...init, proxy: `http://127.0.0.1:${this.proxy.port}` } as RequestInit)
         }
@@ -133,6 +136,7 @@ export class VpnManager {
         headers: { "User-Agent": "opencode-ufr" },
         signal: AbortSignal.timeout(6_000),
         redirect: "manual",
+        keepalive: false, // measure the current route, not a socket pooled before it changed
       })
       const type = res.headers.get("content-type") ?? ""
       this.directCheckedAt = this.now()
@@ -157,11 +161,16 @@ export class VpnManager {
   private async open(): Promise<void> {
     const creds = this.o.credentials!
     this.setState("connecting", "logging in to the uni VPN")
+    const loginMs = this.o.loginTimeoutMs ?? LOGIN_TIMEOUT_MS
+    const signal = AbortSignal.timeout(loginMs)
     const { cookie } = await authenticate({
       gateway: this.o.gateway,
       user: creds.user,
       pass: creds.pass,
       log: this.o.log,
+      signal,
+    }).catch((e) => {
+      throw signal.aborted ? new Error(`the uni VPN gateway did not answer within ${Math.ceil(loginMs / 1000)} s`) : e
     })
     if (this.remoteIp === null) this.remoteIp = await resolveIp(this.o.upstreamHost)
 
@@ -249,6 +258,17 @@ export class VpnManager {
     if (t) await t.close()
     this.setState("off", "stopped")
   }
+}
+
+/** Waits for a shared attempt, but lets one caller give up on it (the attempt keeps running for the others). */
+function untilAborted<T>(p: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return p
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener("abort", onAbort, { once: true })
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort))
+  })
 }
 
 async function resolveIp(host: string): Promise<Ipv4> {

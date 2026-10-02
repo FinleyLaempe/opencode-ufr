@@ -31,6 +31,33 @@ async function until(fn: () => boolean, ms = 2000): Promise<void> {
 }
 
 describe("PPP session over a virtual Fortinet", () => {
+  test("a dead link drops outgoing IP instead of throwing (regression: the daemon crashed when the user's own VPN toggled)", async () => {
+    // The manager's onDead tears the TCP stack down, and resetting an established
+    // connection sends an RST into the link that just died — from inside a timer.
+    const rst = buildDatagram({
+      src: ipv4Parse("10.7.0.2"), dst: ipv4Parse("132.230.100.48"),
+      segment: { header: { srcPort: 40000, dstPort: 443, seq: 1, ack: 1, dataOffset: 20, flags: 0x04, window: 0 }, payload: new Uint8Array(0) },
+    })
+    let died = false
+    let thrown: unknown = null
+    const forti = new VirtualForti({}, (frame) => ppp.receive(frame))
+    const ppp = new PppSession({
+      sendPpp: (frame) => forti.receive(frame),
+      onIp: () => {},
+      onEstablished: () => {},
+      onDead: () => {
+        died = true
+        try { ppp.sendIp(rst) } catch (e) { thrown = e }
+      },
+    }, { dpdS: 1, log: () => {} })
+    ppp.start()
+    await until(() => forti.established)
+    ppp.close() // the virtual peer never acks: the link dies from its own timer, like the dead-peer path
+    await until(() => died, 3_000)
+    expect(thrown).toBeNull()
+    expect(forti.ipFromClient).toEqual([]) // dropped, not sent
+  })
+
   test("LCP + IPCP negotiation assigns inner IP and DNS, then IP flows both ways", async () => {
     const { ppp, forti, events } = rig({ innerIp: "10.7.0.123", dns: ["132.230.1.1", "132.230.2.2"] })
     ppp.start()
