@@ -5,12 +5,40 @@
   "license": "MIT",
   "type": "module",
   "main": "./src/plugin/index.ts",
-  "exports": { ".": "./src/plugin/index.ts" },
-  "bin": { "ufr": "bin/ufr.ts", "opencode-ufr": "bin/ufr.ts" },
-  "files": ["bin", "src", "models.json", "README.md", "LICENSE"],
-  "engines": { "bun": ">=1.3.0" },
-  "repository": { "type": "git", "url": "git+https://github.com/FinleyLaempe/opencode-ufr.git" },
-  "keywords": ["opencode", "opencode-plugin", "uni-freiburg", "open-webui"],
-  "scripts": { "test": "bun test", "typecheck": "tsc --noEmit", "prepublishOnly": "bun run typecheck && bun test" },
-  "devDependencies": { "@types/bun": "^1.3.0", "typescript": "^5.9.0" }
+  "exports": {
+    ".": "./src/plugin/index.ts"
+  },
+  "bin": {
+    "ufr": "bin/ufr.ts",
+    "opencode-ufr": "bin/ufr.ts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "models.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FinleyLaempe/opencode-ufr.git"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "uni-freiburg",
+    "open-webui"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run typecheck && bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.0"
+  }
 }
