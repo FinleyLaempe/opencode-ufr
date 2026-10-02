@@ -25,20 +25,21 @@ opencode plugin add opencode-ufr     # registers the plugin
 
 ## Updating
 
-opencode loads plugins inside a background server (`opencode serve --service`)
-that keeps running after you close the TUI, and it keeps using the plugin
-version it loaded when it started — a new release only arrives once that server
-restarts:
+opencode installs the plugin once into its cache and does not look for a newer
+version while that copy exists — restarting opencode alone keeps the old one.
+It also loads plugins inside a background server (`opencode serve --service`)
+that keeps running after you close the TUI. To update, remove the cached copy
+and stop that server:
 
 ```bash
-bun add -g opencode-ufr@latest          # update the `ufr` CLI
-pkill -f "opencode serve --service"     # stop opencode's background server
+bun add -g opencode-ufr@latest                      # update the `ufr` CLI
+rm -rf ~/.cache/opencode/npm/opencode-ufr@latest    # opencode's cached plugin copy
+pkill -f "opencode serve --service"                 # opencode's background server
 ```
 
-The next opencode start installs the latest plugin. If it still loads the old
-one, delete opencode's cached copy (`~/.cache/opencode/npm/opencode-ufr@latest`)
-and start opencode again. On Windows, end the `opencode` server process in Task
-Manager instead of `pkill`.
+The next opencode start installs the latest version and replaces the old
+gateway once it is idle. On Windows, end the `opencode` server process in Task
+Manager and delete the `opencode-ufr@latest` folder in opencode's cache.
 
 ## Setup
 
