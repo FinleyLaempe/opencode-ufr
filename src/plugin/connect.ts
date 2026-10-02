@@ -13,6 +13,9 @@ import { applyKeyChange, disconnectAll } from "../cli/keys"
 
 export const UFR_INTEGRATION_ID = "unifreiburg"
 
+/** opencode has no connection events for plugins, so the watcher polls; seconds keep /connect feeling immediate. */
+export const CONNECT_POLL_MS = 5_000
+
 export type ConnectDeps = {
   ctx: any // opencode plugin context (integration + storage domains)
   paths: Paths
@@ -23,6 +26,8 @@ export type ConnectDeps = {
   register?: () => Promise<boolean | void> | boolean | void
   /** Whether setup() already registered the provider (it does when a connection exists at startup). */
   providerRegistered?: boolean
+  /** Poll interval override (tests). */
+  pollMs?: number
 }
 
 type CredentialValue = { type?: string; key?: string; configuration?: Record<string, unknown> } | undefined
@@ -131,7 +136,18 @@ export async function registerConnect(d: ConnectDeps): Promise<ConnectRegistrati
   }
 
   await applyOnce()
-  const timer = setInterval(() => void applyOnce(), 60_000)
+  // A registration can take ~40 s (gateway boot) — never start a second one while it runs.
+  let busy = false
+  const tick = async () => {
+    if (busy) return
+    busy = true
+    try {
+      await applyOnce()
+    } finally {
+      busy = false
+    }
+  }
+  const timer = setInterval(() => void tick(), d.pollMs ?? CONNECT_POLL_MS)
   ;(timer as { unref?: () => void }).unref?.()
   return {
     stop: () => clearInterval(timer),

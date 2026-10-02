@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { credentialToInput, registerConnect, UFR_INTEGRATION_ID } from "../../src/plugin/connect"
+import { CONNECT_POLL_MS, credentialToInput, registerConnect, UFR_INTEGRATION_ID } from "../../src/plugin/connect"
 import { daemonRequest } from "../../src/cli/daemon-client"
 import { loadConfig, mergeConfig, saveConfig } from "../../src/shared/config"
 import { applyConnect } from "../../src/shared/connect"
@@ -271,5 +271,55 @@ describe("watcher: failed registrations are retried", () => {
     expect(await applyNow()).toBe(false) // registered — no further attempts
     expect(attempts).toBe(2)
     stop()
+  })
+})
+
+describe("watcher poll interval", () => {
+  test("polls on its own: a connection made after setup is applied without any manual trigger", async () => {
+    env = await daemonEnv({ keys: {} })
+    let cred: unknown = null
+    const { ctx } = dynamicCtx(() => cred)
+    let registrations = 0
+    const { stop } = await registerConnect({
+      ctx,
+      paths: env.paths,
+      secrets: env.secrets,
+      log: () => {},
+      register: async () => { registrations++ },
+      pollMs: 20,
+    })
+    cred = { type: "key", key: "k1", configuration: {} } // the user submits /connect
+    for (let i = 0; i < 50 && registrations === 0; i++) await new Promise((r) => setTimeout(r, 20))
+    stop()
+    expect(await env.secrets.get("key1")).toBe("k1")
+    expect(registrations).toBe(1)
+  })
+
+  test("the default interval is a few seconds, not a minute", () => {
+    expect(CONNECT_POLL_MS).toBeLessThanOrEqual(5_000)
+  })
+})
+
+describe("watcher: overlapping polls", () => {
+  test("a slow registration is not started again by the next poll", async () => {
+    env = await daemonEnv({ keys: {} })
+    let cred: unknown = null
+    const { ctx } = dynamicCtx(() => cred)
+    let registrations = 0
+    const { stop } = await registerConnect({
+      ctx,
+      paths: env.paths,
+      secrets: env.secrets,
+      log: () => {},
+      register: async () => {
+        registrations++
+        await new Promise((r) => setTimeout(r, 300)) // e.g. the gateway still booting
+      },
+      pollMs: 20,
+    })
+    cred = { type: "key", key: "k1", configuration: {} }
+    await new Promise((r) => setTimeout(r, 600)) // ~30 poll ticks while registration is slow
+    stop()
+    expect(registrations).toBe(1)
   })
 })

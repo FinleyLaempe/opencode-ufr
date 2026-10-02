@@ -23,6 +23,23 @@ opencode plugin add opencode-ufr     # registers the plugin
 
 (or add `"plugins": ["opencode-ufr"]` to your `opencode.json` manually.)
 
+## Updating
+
+opencode loads plugins inside a background server (`opencode serve --service`)
+that keeps running after you close the TUI, and it keeps using the plugin
+version it loaded when it started — a new release only arrives once that server
+restarts:
+
+```bash
+bun add -g opencode-ufr@latest          # update the `ufr` CLI
+pkill -f "opencode serve --service"     # stop opencode's background server
+```
+
+The next opencode start installs the latest plugin. If it still loads the old
+one, delete opencode's cached copy (`~/.cache/opencode/npm/opencode-ufr@latest`)
+and start opencode again. On Windows, end the `opencode` server process in Task
+Manager instead of `pkill`.
+
 ## Setup
 
 **Inside opencode — the normal way:** open `/connect`, pick **Uni Freiburg**,
@@ -66,9 +83,9 @@ ufr disconnect   # remove everything: keys, uni login, config, gateway
 Removing the **unifreiburg** integration in opencode's `/connect` panel does the
 same as `ufr disconnect`: the stored keys and uni login are wiped, the gateway
 stops, and the models disappear from the picker on the next opencode start.
-While opencode runs, the removal is noticed within a minute. If opencode was
-closed when you removed the integration, run `ufr disconnect` once to wipe what
-is left.
+While opencode runs, connecting and removing are noticed within seconds. If
+opencode was closed when you removed the integration, run `ufr disconnect` once
+to wipe what is left.
 
 ## The built-in VPN
 
