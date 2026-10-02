@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-28",
+  "updated": "2026-10-02",
   "defaults": {
     "context": 131072,
     "max_output": 16384
@@ -60,7 +60,11 @@
       "context": 256000
     },
     "qwen-3.5-397b-llmlb": {
-      "context": 262144
+      "context": 262144,
+      "price": {
+        "input": 0.1,
+        "output": 0.1
+      }
     },
     "qwen-3.6-27b-llmlb": {
       "context": 262144
@@ -122,7 +126,7 @@
       "vision": true
     },
     "ufr/reasoning-complex": {
-      "context": 262144,
+      "context": 1048576,
       "price": {
         "input": 0.1,
         "output": 0.1
@@ -135,7 +139,12 @@
       "context": 256000
     },
     "ufr/vision-complex": {
-      "context": 262144
+      "context": 1048576,
+      "vision": true,
+      "price": {
+        "input": 0.1,
+        "output": 0.1
+      }
     },
     "ufr/vision-fast": {
       "context": 131044
@@ -201,6 +210,15 @@
         "input": 0.3,
         "output": 0.9
       }
+    },
+    "deepseek-v4.1-flash-llmlb": {
+      "context": 1048576,
+      "vision": true,
+      "price": {
+        "input": 0.1,
+        "output": 0.1
+      },
+      "note": "context 1048576 probed live 2026-10-02 (vLLM ContextWindowExceededError named the limit); prices from the UFR portal (Lokale Modelle)"
     }
   }
 }

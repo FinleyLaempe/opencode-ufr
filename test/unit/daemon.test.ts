@@ -193,6 +193,28 @@ describe("daemon", () => {
     expect(d.status().keys.map((k) => k.alias)).toEqual(["main"])
   })
 
+  test("a model unknown to models.json auto-probes its real context limit", async () => {
+    const e = await setup()
+    // the fake names the limit in the context error (like vLLM does)
+    e.ufr.contextLimitChars.set("brand-new-llmlb", 262_144)
+    const d = await e.start({ probes: true })
+    // the probe runs after the catalog load; wait for the rebuilt catalog
+    const models = async () => ((await (await e.api(d, "/v1/models")).json()) as { data: { id: string; opencode: { limit: { context: number } } }[] }).data
+    let context = 0
+    for (let t = 0; t < 200 && context !== 262_144; t++) {
+      context = (await models()).find((m) => m.id === "brand-new-llmlb")?.opencode.limit.context ?? 0
+      if (context !== 262_144) await Bun.sleep(50)
+    }
+    expect(context).toBe(262_144)
+    // the probe result survives a restart (stored in the stats db)
+    await d.stop()
+    const d2 = await e.start({ probes: true })
+    const list2 = await (await e.api(d2, "/v1/models")).json() as { data: { id: string; opencode: { limit: { context: number } } }[] }
+    const again = list2.data.find((m) => m.id === "brand-new-llmlb")
+    expect(again!.opencode.limit.context).toBe(262_144)
+    await d2.stop()
+  }, 15_000)
+
   test("a client disconnecting mid-stream aborts the upstream call and frees the in-flight slot", async () => {
     const e = await setup()
     e.ufr.streamChunkDelayMs = 1_000

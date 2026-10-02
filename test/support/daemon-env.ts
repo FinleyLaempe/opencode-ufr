@@ -29,7 +29,7 @@ export async function daemonEnv(o: { keys?: Record<string, string>; config?: Rec
   )
   const running: RunningDaemon[] = []
   const start = async (extra: Partial<DaemonOptions> = {}) => {
-    const d = await startDaemon({ paths, secrets, bundledModelsPath: bundled, port: 0, exitOnIdle: false, log: () => {}, ...extra })
+    const d = await startDaemon({ paths, secrets, bundledModelsPath: bundled, port: 0, exitOnIdle: false, probes: false, log: () => {}, ...extra })
     running.push(d)
     return d
   }

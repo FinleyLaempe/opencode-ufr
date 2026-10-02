@@ -46,19 +46,23 @@ function toPrice(p: Price | undefined): ModelPrice | null {
   return { input: p.input, output: p.output, cacheRead: p.cache_read ?? p.input, cacheWrite: p.cache_write ?? p.input }
 }
 
-export function buildCatalog(ufr: UfrModel[], file: ModelsFile, opts: { allowPaid: boolean }): Catalog {
+export function buildCatalog(ufr: UfrModel[], file: ModelsFile, opts: { allowPaid: boolean; probes?: Record<string, { context: number; at: number }> }): Catalog {
   const warnings: string[] = []
   const exclude = new Set(file.exclude)
+  const probes = opts.probes ?? {}
   const models = new Map<string, Model>()
   for (const u of ufr) {
     const e = file.models[u.id]
+    // precedence: models.json entry (measured, ships with releases) > auto-probe > defaults
+    const probed = probes[u.id]?.context
+    const context = e?.context ?? probed ?? file.defaults.context
     models.set(u.id, {
       id: u.id,
       name: u.name,
       tier: u.tier,
       vision: e?.vision ?? u.vision,
       tools: e?.tools ?? true,
-      context: e?.context ?? file.defaults.context,
+      context,
       maxOutput: e?.max_output ?? file.defaults.max_output,
       price: toPrice(e?.price),
       hasEntry: e !== undefined,

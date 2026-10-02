@@ -49,6 +49,8 @@ const DEFAULT_MSS = 1360 // fits a 1400-byte tunnel MTU with IP+TCP headers
 const DEFAULT_RTO_MS = 500
 const DEFAULT_MAX_RETRANSMITS = 6
 const RECV_WINDOW = 65535
+const CWND_START = 4 // segments in flight before the first ACK (slow start)
+const CWND_MAX = 64
 
 export function freshLocalPort(): number {
   return 32768 + Math.floor(Math.random() * 20000)
@@ -65,8 +67,11 @@ export class TcpConn {
   private rcvNext = 0 // next byte we expect from the peer (RCV.NXT)
   private peerWindow = 0
   private peerMss = 536
-  private outQueue: QueueEntry[] = []
+  private outQueue: QueueEntry[] = [] // not yet sent
+  private flightQueue: QueueEntry[] = [] // sent, not yet acked (retransmit source)
   private earlyQueue: Uint8Array[] = [] // application data written while syn-sent
+  private cwnd = CWND_START // congestion window in segments (slow start)
+  private dupAcks = 0
   private finQueued = false
   private finSent = false
   private closeFired = false
@@ -145,7 +150,7 @@ export class TcpConn {
   }
 
   get buffered(): number {
-    return this.outQueue.reduce((n, e) => n + e.bytes.length, 0)
+    return this.outQueue.reduce((n, e) => n + e.bytes.length, 0) + this.flightBytes()
   }
 
   // -- inbound -------------------------------------------------------------
@@ -219,7 +224,6 @@ export class TcpConn {
       return
     }
 
-    if (this.finQueued && !this.outQueue.some((e) => e.len > 0) && this.unacked === 0) this.maybeSendFin()
     this.flush()
   }
 
@@ -239,17 +243,16 @@ export class TcpConn {
     const seg: TcpSegment = { header, payload, options }
     const bytes = buildDatagram({ src: this.info.local, dst: this.info.remote, segment: seg })
     this.sendPkt(bytes)
-    if (queueLen > 0) this.outQueue.push({ seq: this.seq, len: queueLen, bytes })
+    if (queueLen > 0) this.flightQueue.push({ seq: this.seq, len: queueLen, bytes }) // sent: tracks in flight
   }
 
   private flush(): void {
-    let inFlight = this.unacked
+    let inFlight = this.flightBytes()
     let sent = false
+    const limit = Math.min(Math.max(this.peerWindow, 1), this.cwnd * this.effMss())
     while (this.outQueue.length > 0) {
       const e = this.outQueue[0]!
-      if (e.len > 0) break // SYN/FIN marker: only retransmits move it
-      const window = Math.max(this.peerWindow, 1)
-      if (inFlight + e.bytes.length > window) break
+      if (inFlight + e.bytes.length > limit) break
       const header = {
         srcPort: this.info.localPort,
         dstPort: this.info.remotePort,
@@ -262,15 +265,23 @@ export class TcpConn {
       this.sendPkt(buildDatagram({ src: this.info.local, dst: this.info.remote, segment: { header, payload: e.bytes } }))
       inFlight += e.bytes.length
       sent = true
-      this.outQueue.shift()
+      this.flightQueue.push(this.outQueue.shift()!)
     }
     if (sent) this.armRto()
     if (this.finQueued && this.buffered === 0) this.maybeSendFin()
     if (this.buffered === 0) this.events.onDrain?.(this)
   }
 
+  private effMss(): number {
+    return Math.min(this.peerMss, this.opts.mss ?? DEFAULT_MSS)
+  }
+
+  private flightBytes(): number {
+    return this.flightQueue.reduce((n, e) => n + e.bytes.length, 0)
+  }
+
   private maybeSendFin(): void {
-    if (this.finSent || this.outQueue.some((e) => e.len > 0)) return // FIN already in flight
+    if (this.finSent || this.flightQueue.some((e) => e.len > 0)) return // FIN already in flight
     this.finSent = true
     this.sendSegment({ flags: FIN | ACK }, new Uint8Array(0), 1)
     this.seq = (this.seq + 1) >>> 0
@@ -297,17 +308,29 @@ export class TcpConn {
     if (window > 0) this.peerWindow = window
     const unacked = this.unacked
     const newly = (ack - this.acked) >>> 0
-    if (newly === 0 || newly > unacked) return // stale or covering more than we sent
+    if (newly === 0 || newly > unacked) {
+      // duplicate ACK: the peer is missing something after `acked`
+      if (unacked > 0 && ++this.dupAcks >= 3) {
+        this.dupAcks = 0
+        this.cwnd = Math.max(Math.floor(this.cwnd / 2), CWND_START) // multiplicative decrease
+        const first = this.flightQueue[0]!
+        if (first) this.sendPkt(first.bytes) // fast retransmit, no RTO wait
+      }
+      return
+    }
+    this.dupAcks = 0
+    // slow start: one segment of window per acked segment, bounded by the peer window
+    this.cwnd = Math.min(Math.ceil(this.cwnd + newly / this.effMss()), CWND_MAX)
     this.acked = ack
     this.retransmits = 0
     this.rto = this.opts.rtoMs ?? DEFAULT_RTO_MS
-    // drop fully acknowledged queue entries
-    while (this.outQueue.length > 0) {
-      const e = this.outQueue[0]!
+    // drop fully acknowledged entries from the flight queue
+    while (this.flightQueue.length > 0) {
+      const e = this.flightQueue[0]!
       if ((e.seq + e.len) >>> 0 > ack || (e.len === 0 && e.seq + e.bytes.length > ack)) break
-      this.outQueue.shift()
+      this.flightQueue.shift()
     }
-    if (this.outQueue.length === 0 && this.unacked === 0) {
+    if (this.flightQueue.length === 0 && this.unacked === 0) {
       if (this.timer) { clearTimeout(this.timer); this.timer = null }
     }
     if (this.state === "fin-wait-1" && this.unacked === 0) this.state = "fin-wait-2"
@@ -335,8 +358,13 @@ export class TcpConn {
       return
     }
     this.rto = Math.min(this.rto * 2, 5_000)
-    const first = this.outQueue[0]!
-    this.sendPkt(first.bytes) // go-back-N: resend oldest unacked segment
+    this.cwnd = CWND_START // collapse the window: the burst was too much
+    this.dupAcks = 0
+    // true go-back-N: resend EVERY unacked segment, not just the first —
+    // a burst can lose several at once, one-per-RTO would never recover
+    for (const e of this.flightQueue) {
+      this.sendPkt(e.bytes)
+    }
     this.armRto()
   }
 

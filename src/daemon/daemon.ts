@@ -12,7 +12,10 @@ import { VERSION } from "../shared/version"
 import { type BreakerState, BreakerRegistry } from "./breaker"
 import { type Catalog, EMPTY_CATALOG, buildCatalog, listModels } from "./catalog"
 import { type FetchLike, type ModelsSource, loadBundledModels, loadUfrModels } from "./catalog-source"
+import type { ModelsFile } from "../shared/models-file"
 import { type KeyInfo, KeyPool, type KeySnapshot } from "./keypool"
+import { loadProbes, probeContextLimit, saveProbe } from "./probe"
+import { type UfrModel } from "./catalog"
 import { Router } from "./router"
 import { startServer } from "./server"
 import { Stats } from "./stats"
@@ -58,6 +61,8 @@ export type DaemonOptions = {
   idleCheckMs?: number
   /** Backoff after UFR's model list failed to load (VPN down, UFR unreachable); the last delay repeats. */
   catalogRetryMs?: number[]
+  /** Auto-probe the context limit of unknown models (default: on). */
+  probes?: boolean
   onStopped?: () => void
 }
 
@@ -273,12 +278,50 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
     const reach: StatusJson["upstream"] = { ok: null, message: "", at: 0 }
     let catalog: Catalog = EMPTY_CATALOG
     let catalogInfo: Omit<StatusJson["catalog"], "models" | "warnings"> = { source: "none", ufrSource: "none", loadedAt: 0 }
+    let probeStore = loadProbes((k) => db.getKv(k))
+    let probing = false
+    /** Measure models UFR serves but models.json does not describe (one at a time, off the hot path). */
+    const scheduleProbes = async (ufrModels: UfrModel[], file: ModelsFile): Promise<void> => {
+      if (probing || keyInfos.length === 0 || o.probes === false) return
+      const unknown = ufrModels
+        .map((u) => u.id)
+        .filter((id) => file.models[id] === undefined && probeStore[id] === undefined)
+      if (unknown.length === 0) return
+      probing = true
+      try {
+        for (const id of unknown.slice(0, 2)) {
+          if (stopping) break
+          const result = await probeContextLimit({
+            model: id,
+            baseUrl: config.upstream.baseUrl,
+            key: keyInfos[0]!.secret,
+            transport,
+            log,
+          })
+          if (result) {
+            if (stopping) break
+            saveProbe(probeStore, id, result, (k, v) => {
+              if (stopping) return
+              try { db.setKv(k, v) } catch { /* db already closed */ }
+            })
+            log(`context probe ${id}: ${result.context} tokens (${result.how})`)
+          }
+        }
+        if (unknown.length > 0) {
+          const mf2 = await loadBundledModels({ bundledPath: o.bundledModelsPath })
+          catalog = buildCatalog(ufrModels, mf2.file, { allowPaid: config.allowPaid, probes: probeStore })
+          catalogInfo = { ...catalogInfo, loadedAt: now() }
+        }
+      } finally {
+        probing = false
+      }
+    }
     const refreshCatalog = async () => {
       // fixes ship with the package; UFR's live list is fetched through the transport (vpn-aware)
       const mf = await loadBundledModels({ bundledPath: o.bundledModelsPath })
       const ufr = await loadUfrModels({ baseUrl: config.upstream.baseUrl, key: keyInfos[0]?.secret ?? null,
         cachePath: p.ufrModelsCache, fetch: (u, i) => transport.fetch(u, i), log })
-      catalog = buildCatalog(ufr.models, mf.file, { allowPaid: config.allowPaid })
+      catalog = buildCatalog(ufr.models, mf.file, { allowPaid: config.allowPaid, probes: probeStore })
       catalogInfo = { source: mf.source, ufrSource: ufr.source, loadedAt: now() }
       if (ufr.error) Object.assign(reach, { ok: false, message: ufr.error, at: now() })
       else if (reach.ok !== true) Object.assign(reach, { ok: true, message: "", at: now() })
@@ -286,6 +329,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       // Keys are read once at start: without one a retry can never succeed.
       if (ufr.error && keyInfos.length > 0) scheduleCatalogRetry()
       else clearCatalogRetry()
+      void scheduleProbes(ufr.models, mf.file).catch(() => {}) // must not outlive a shutdown
     }
     await refreshCatalog()
 
