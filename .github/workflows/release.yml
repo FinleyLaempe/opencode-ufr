@@ -70,8 +70,13 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
-      - name: publish to npm
-        run: npm publish --tag latest
+      # staged publishing (npm ≥ 11.15): the version lands in the staging area;
+      # a maintainer approves it with 2FA on npmjs.com (Staged Packages) or via
+      # `npm stage approve` before it goes live.
+      - name: stage package for review
+        run: |
+          npm install -g npm@latest
+          npm stage publish
 
   github-release:
     needs: publish
