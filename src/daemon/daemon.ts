@@ -11,7 +11,7 @@ import { startOfLocalDay } from "../shared/time"
 import { VERSION } from "../shared/version"
 import { type BreakerState, BreakerRegistry } from "./breaker"
 import { type Catalog, EMPTY_CATALOG, buildCatalog, listModels } from "./catalog"
-import { type FetchLike, type ModelsSource, loadModelsFile, loadUfrModels } from "./catalog-source"
+import { type FetchLike, type ModelsSource, loadBundledModels, loadUfrModels } from "./catalog-source"
 import { type KeyInfo, KeyPool, type KeySnapshot } from "./keypool"
 import { Router } from "./router"
 import { startServer } from "./server"
@@ -243,7 +243,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
     const timers: ReturnType<typeof setInterval>[] = []
     let stopping = false
     // UFR's model list failed (VPN not up yet, UFR unreachable): retry with backoff
-    // (60 s → 120 s → 300 s → 900 s, then every 900 s; no step longer than refreshHours)
+    // (60 s → 120 s → 300 s → 900 s, then every 900 s)
     // so connecting the VPN later needs no daemon restart.
     const retryMs = o.catalogRetryMs ?? [60_000, 120_000, 300_000, 900_000]
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -259,7 +259,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
     }
     const scheduleCatalogRetry = () => {
       if (stopping || retryTimer) return
-      const delay = Math.min(retryMs[Math.min(retries, retryMs.length - 1)]!, config.catalog.refreshHours * 3_600_000)
+      const delay = Math.min(retryMs[Math.min(retries, retryMs.length - 1)]!, 900_000)
       retries++
       retryTimer = setTimeout(() => {
         retryTimer = null
@@ -274,8 +274,8 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
     let catalog: Catalog = EMPTY_CATALOG
     let catalogInfo: Omit<StatusJson["catalog"], "models" | "warnings"> = { source: "none", ufrSource: "none", loadedAt: 0 }
     const refreshCatalog = async () => {
-      const mf = await loadModelsFile({ url: config.catalog.url, cachePath: p.modelsCache, etagPath: p.modelsEtag,
-        bundledPath: o.bundledModelsPath, fetch: f, log })
+      // fixes ship with the package; UFR's live list is fetched through the transport (vpn-aware)
+      const mf = await loadBundledModels({ bundledPath: o.bundledModelsPath })
       const ufr = await loadUfrModels({ baseUrl: config.upstream.baseUrl, key: keyInfos[0]?.secret ?? null,
         cachePath: p.ufrModelsCache, fetch: (u, i) => transport.fetch(u, i), log })
       catalog = buildCatalog(ufr.models, mf.file, { allowPaid: config.allowPaid })
@@ -375,8 +375,9 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
     await writeFileAtomic(p.daemonFile, JSON.stringify({ port, pid: process.pid, version: VERSION, startedAt }) + "\n", 0o600)
 
     timers.push(setInterval(() => {
+      // pick up new UFR models periodically (the fixes file only changes with a plugin update)
       refreshCatalog().catch((e) => log(`catalog refresh failed: ${(e as Error).message}`))
-    }, config.catalog.refreshHours * 3_600_000))
+    }, 6 * 3_600_000))
     timers.push(setInterval(() => db.setKv("breakers", JSON.stringify(breakers.snapshot())), 30_000))
     timers.push(setInterval(() => db.prune(now() - 90 * 86_400_000), 86_400_000))
     if (o.exitOnIdle !== false) {

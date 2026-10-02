@@ -146,7 +146,7 @@ describe("ufr status / stats / catalog / stop", () => {
       keys: [{ alias: "main", used: 3, cap: 18, blockedForMs: 42_000, invalid: false }],
       pool: { enabled: true, cap: 800, windowMs: 3_600_000, inWindow: 12, admitted: 12, queued: 0, rejected: 0 },
       breakers: { "glm-5.2-llmlb": { state: "open", level: 1, retryAfterMs: 95_000 } },
-      catalog: { source: "remote", ufrSource: "cache", loadedAt: 0, models: 34, warnings: ["x: no price"] },
+      catalog: { source: "bundled", ufrSource: "cache", loadedAt: 0, models: 34, warnings: ["x: no price"] },
       vpn: null,
       spendToday: { main: 0.1069 },
       dailyBudgetUsd: 20,
@@ -185,7 +185,6 @@ describe("ufr status / stats / catalog / stop", () => {
 
   test("catalog diff talks to UFR with the first key", async () => {
     env = await daemonEnv({ keys: { main: "key-a" } })
-    await Bun.write(env.paths.modelsCache, JSON.stringify(TEST_MODELS_FILE))
     const r = await cli(["catalog", "diff"])
     expect(r.out).toContain("+ brand-new-llmlb")
   })

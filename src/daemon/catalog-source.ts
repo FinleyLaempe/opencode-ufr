@@ -1,48 +1,22 @@
 import { fileURLToPath } from "node:url"
-import { readJson, readText, writeFileAtomic } from "../shared/fs"
+import { readJson, writeFileAtomic } from "../shared/fs"
 import { type ModelsFile, validateModelsFile } from "../shared/models-file"
 import { VPN_MESSAGE, isVpnPage } from "../shared/vpn"
 import { type UfrModel, parseUfrModels } from "./catalog"
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
-export type ModelsSource = "remote" | "cache" | "bundled"
+export type ModelsSource = "bundled"
 
 export const BUNDLED_MODELS = fileURLToPath(new URL("../../models.json", import.meta.url))
 
-/** models.json: remote (ETag) → last good cache → copy shipped in the package. */
-export async function loadModelsFile(o: {
-  url: string
-  cachePath: string
-  etagPath: string
+/**
+ * The fixes file ships with the package (models.json in the release) — no
+ * remote pull. Model data updates arrive with plugin updates; UFR's live
+ * model list supplies everything else.
+ */
+export async function loadBundledModels(o: {
   bundledPath?: string
-  fetch: FetchLike
-  log: (m: string) => void
 }): Promise<{ file: ModelsFile; source: ModelsSource }> {
-  const cached = await readJson(o.cachePath)
-  const etag = cached ? (await readText(o.etagPath))?.trim() : undefined
-  try {
-    const res = await o.fetch(o.url, {
-      headers: etag ? { "If-None-Match": etag } : {},
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (res.status === 304 && cached) return { file: validateModelsFile(cached), source: "remote" }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const text = await res.text()
-    const file = validateModelsFile(JSON.parse(text)) // validate before it can replace a good cache
-    await writeFileAtomic(o.cachePath, text)
-    const tag = res.headers.get("etag")
-    if (tag) await writeFileAtomic(o.etagPath, tag)
-    return { file, source: "remote" }
-  } catch (e) {
-    o.log(`models.json: remote copy unavailable or invalid (${(e as Error).message}) — using the ${cached ? "cached" : "bundled"} copy`)
-  }
-  if (cached) {
-    try {
-      return { file: validateModelsFile(cached), source: "cache" }
-    } catch (e) {
-      o.log(`models.json: cached copy invalid (${(e as Error).message})`)
-    }
-  }
   const bundled: unknown = JSON.parse(await Bun.file(o.bundledPath ?? BUNDLED_MODELS).text())
   return { file: validateModelsFile(bundled), source: "bundled" }
 }

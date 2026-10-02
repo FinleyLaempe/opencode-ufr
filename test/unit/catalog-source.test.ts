@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { loadModelsFile, loadUfrModels } from "../../src/daemon/catalog-source"
+import { loadBundledModels, loadUfrModels } from "../../src/daemon/catalog-source"
 import { TEST_MODELS_FILE, UFR_RAW_MODELS } from "../support/models"
 
 let dir = ""
@@ -23,48 +23,18 @@ function serve(handler: (req: Request) => Response | Promise<Response>): string 
 }
 
 const noLog = () => {}
-const opts = (url: string) => ({
-  url: `${url}/models.json`,
-  cachePath: join(dir, "models.json"),
-  etagPath: join(dir, "models.etag"),
-  bundledPath: join(dir, "bundled.json"),
-  fetch: (u: string, i?: RequestInit) => fetch(u, i),
-  log: noLog,
-})
 
-describe("loadModelsFile", () => {
-  test("remote copy is validated, cached and its ETag remembered; 304 reuses the cache", async () => {
-    let seenTag: string | null = null
-    const url = serve((req) => {
-      seenTag = req.headers.get("if-none-match")
-      if (seenTag === '"v1"') return new Response(null, { status: 304 })
-      return new Response(JSON.stringify(TEST_MODELS_FILE), { headers: { etag: '"v1"' } })
-    })
-    expect((await loadModelsFile(opts(url))).source).toBe("remote")
-    expect(JSON.parse(await readFile(join(dir, "models.json"), "utf8"))).toEqual(TEST_MODELS_FILE)
-    const second = await loadModelsFile(opts(url))
-    expect(seenTag!).toBe('"v1"')
-    expect(second).toEqual({ file: TEST_MODELS_FILE, source: "remote" })
+describe("loadBundledModels", () => {
+  test("loads the copy shipped with the package", async () => {
+    const bundled = join(dir, "bundled.json")
+    await writeFile(bundled, JSON.stringify(TEST_MODELS_FILE))
+    expect(await loadBundledModels({ bundledPath: bundled })).toEqual({ file: TEST_MODELS_FILE, source: "bundled" })
   })
 
-  test("a server error falls back to the cache", async () => {
-    await writeFile(join(dir, "models.json"), JSON.stringify(TEST_MODELS_FILE))
-    const url = serve(() => new Response("boom", { status: 500 }))
-    expect((await loadModelsFile(opts(url))).source).toBe("cache")
-  })
-
-  test("an invalid remote file is ignored and does not overwrite the cache", async () => {
-    await writeFile(join(dir, "models.json"), JSON.stringify(TEST_MODELS_FILE))
-    const url = serve(() => Response.json({ schema: 99 }))
-    const r = await loadModelsFile(opts(url))
-    expect(r.source).toBe("cache")
-    expect(JSON.parse(await readFile(join(dir, "models.json"), "utf8"))).toEqual(TEST_MODELS_FILE)
-  })
-
-  test("no cache and no network falls back to the bundled copy", async () => {
-    await writeFile(join(dir, "bundled.json"), JSON.stringify(TEST_MODELS_FILE))
-    const r = await loadModelsFile(opts("http://127.0.0.1:9"))
-    expect(r).toEqual({ file: TEST_MODELS_FILE, source: "bundled" })
+  test("an invalid bundled file fails loudly (it ships with the release)", async () => {
+    const bundled = join(dir, "bundled.json")
+    await writeFile(bundled, JSON.stringify({ schema: 99 }))
+    expect(loadBundledModels({ bundledPath: bundled })).rejects.toThrow()
   })
 })
 

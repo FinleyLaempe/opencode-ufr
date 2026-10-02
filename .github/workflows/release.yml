@@ -36,9 +36,9 @@ jobs:
   publish:
     needs: verify
     runs-on: ubuntu-latest
-    # The "npm" environment (with a required reviewer) gates this job:
-    # publishing waits for manual approval in the Actions run.
-    environment: npm
+    # Approval happens on npm's side: the package is staged (`npm stage
+    # publish`, OIDC trusted publishing — no stored token) and goes live after
+    # the maintainer approves it with 2FA on npmjs.com → Staged Packages.
     permissions:
       id-token: write # OIDC trusted publishing — no NPM_TOKEN needed
       contents: read

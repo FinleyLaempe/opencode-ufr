@@ -12,8 +12,6 @@ export type Paths = {
   lockFile: string
   logFile: string
   statsDb: string
-  modelsCache: string
-  modelsEtag: string
   ufrModelsCache: string
 }
 
@@ -55,8 +53,6 @@ export function resolvePaths(
     lockFile: join(stateDir, "daemon.lock"),
     logFile: join(stateDir, "daemon.log"),
     statsDb: join(dataDir, "stats.db"),
-    modelsCache: join(cacheDir, "models.json"),
-    modelsEtag: join(cacheDir, "models.etag"),
     ufrModelsCache: join(cacheDir, "ufr-models.json"),
   }
 }

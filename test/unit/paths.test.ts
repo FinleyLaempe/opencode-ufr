@@ -8,7 +8,6 @@ describe("resolvePaths", () => {
     expect(p.configFile).toBe(join("/home/u", ".config", "opencode-ufr", "config.json"))
     expect(p.daemonFile).toBe(join("/home/u", ".local", "state", "opencode-ufr", "daemon.json"))
     expect(p.tokenFile).toBe(join("/home/u", ".local", "state", "opencode-ufr", "token"))
-    expect(p.modelsCache).toBe(join("/home/u", ".cache", "opencode-ufr", "models.json"))
     expect(p.statsDb).toBe(join("/home/u", ".local", "share", "opencode-ufr", "stats.db"))
   })
 

@@ -19,7 +19,6 @@ export type Config = {
   breaker: { tripThreshold: number; ladderS: number[]; probeTimeoutS: number }
   allowPaid: boolean
   dailyBudgetUsd: number
-  catalog: { url: string; refreshHours: number }
   idleShutdownMin: number
 }
 
@@ -44,7 +43,6 @@ export const DEFAULTS: Config = {
   breaker: { tripThreshold: 3, ladderS: [30, 120, 300, 900, 1800, 3600], probeTimeoutS: 120 },
   allowPaid: false,
   dailyBudgetUsd: 20,
-  catalog: { url: "https://raw.githubusercontent.com/FinleyLaempe/opencode-ufr/main/models.json", refreshHours: 6 },
   idleShutdownMin: 5,
 }
 
@@ -72,8 +70,6 @@ const RULES: Record<string, Rule> = {
   "breaker.probeTimeoutS": "int>=1",
   allowPaid: "bool",
   dailyBudgetUsd: "num>=0",
-  "catalog.url": "str",
-  "catalog.refreshHours": "int>=1",
   idleShutdownMin: "int>=1",
 }
 
@@ -88,7 +84,6 @@ const MAX: Record<string, number> = {
   "limits.poolMaxWaitS": 86_400,
   "breaker.ladderS": 86_400,
   "breaker.probeTimeoutS": 86_400,
-  "catalog.refreshHours": 168,
   idleShutdownMin: 1_440,
 }
 

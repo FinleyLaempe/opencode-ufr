@@ -1,5 +1,5 @@
 import type { UfrModel } from "../daemon/catalog"
-import { BUNDLED_MODELS, loadModelsFile, loadUfrModels } from "../daemon/catalog-source"
+import { BUNDLED_MODELS, loadBundledModels, loadUfrModels } from "../daemon/catalog-source"
 import { loadConfig } from "../shared/config"
 import type { ModelsFile } from "../shared/models-file"
 import type { CliDeps } from "./index"
@@ -27,8 +27,7 @@ export async function cmdCatalogDiff(d: CliDeps): Promise<number> {
     return 1
   }
   const log = (m: string) => d.io.err(`${m}\n`)
-  const mf = await loadModelsFile({ url: cfg.catalog.url, cachePath: d.paths.modelsCache, etagPath: d.paths.modelsEtag,
-    bundledPath: BUNDLED_MODELS, fetch: d.fetch, log })
+  const mf = await loadBundledModels({ bundledPath: BUNDLED_MODELS })
   const ufr = await loadUfrModels({ baseUrl: cfg.upstream.baseUrl, key, cachePath: d.paths.ufrModelsCache, fetch: d.fetch, log })
   if (ufr.source !== "remote") {
     d.io.err(`cannot read UFR's live model list: ${ufr.error}\n`)

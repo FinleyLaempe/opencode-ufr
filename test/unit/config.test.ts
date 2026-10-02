@@ -23,10 +23,6 @@ describe("config", () => {
     expect(DEFAULTS.dailyBudgetUsd).toBe(20)
     expect(DEFAULTS.idleShutdownMin).toBe(5)
     expect(DEFAULTS.upstream).toEqual({ baseUrl: "https://openwebui.uni-freiburg.de/api", requestTimeoutS: 600 })
-    expect(DEFAULTS.catalog).toEqual({
-      url: "https://raw.githubusercontent.com/FinleyLaempe/opencode-ufr/main/models.json",
-      refreshHours: 6,
-    })
     expect(DEFAULTS.transport).toEqual({ type: "auto" })
   })
 
@@ -53,7 +49,6 @@ describe("config", () => {
   })
 
   test("values that become timers are bounded (a timer above 2^31-1 ms fires every 1 ms)", () => {
-    expect(() => mergeConfig({ catalog: { refreshHours: 169 } })).toThrow(/catalog\.refreshHours.*at most 168/)
     expect(() => mergeConfig({ breaker: { ladderS: [30, 86_401] } })).toThrow(/breaker\.ladderS.*at most 86400/)
     const bounds: [string, number][] = [
       ["limits.keyWindowS", 86_400], ["limits.keyMaxWaitS", 86_400], ["limits.poolWindowS", 86_400],
@@ -68,7 +63,7 @@ describe("config", () => {
       expect(() => mergeConfig(at(path, max))).not.toThrow()
       expect(() => mergeConfig(at(path, max + 1))).toThrow(new RegExp(`${path.replace(".", "\\.")}.*at most ${max}`))
     }
-    expect(mergeConfig({ catalog: { refreshHours: 168 }, breaker: { ladderS: [86_400] } }).catalog.refreshHours).toBe(168)
+    expect(mergeConfig({ breaker: { ladderS: [86_400] } }).breaker.ladderS).toEqual([86_400])
   })
 
   test("duplicate key aliases are rejected", () => {
