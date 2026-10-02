@@ -4,6 +4,7 @@ import type { Readable, Writable } from "node:stream"
 export type Io = {
   out(s: string): void
   err(s: string): void
+  isTTY: boolean
   prompt(question: string, o?: { secret?: boolean }): Promise<string>
   confirm(question: string): Promise<boolean>
 }
@@ -12,15 +13,33 @@ export function terminalIo(): Io {
   return {
     out: (s) => void process.stdout.write(s),
     err: (s) => void process.stderr.write(s),
+    isTTY: process.stdin.isTTY === true,
     prompt: (q, o) => (o?.secret ? (process.stdin.isTTY ? readSecret(q) : readPipedSecret(q)) : readLine(q)),
-    confirm: async (q) => /^(y|yes|j|ja)$/i.test((await readLine(`${q} [y/N] `)).trim()),
+    // Non-interactive sessions (scripts, pipes) can never answer a question:
+    // treat a confirm as "no" immediately instead of waiting on stdin forever.
+    confirm: async (q) =>
+      process.stdin.isTTY === true && /^(y|yes|j|ja)$/i.test((await readLine(`${q} [y/N] `)).trim()),
   }
 }
 
-async function readLine(q: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
+/** Testable variant: answers one prompt from a closed/ended stream with "" instead of hanging. */
+export function readLineFrom(q: string, input: Readable, output: Writable): Promise<string> {
+  return readLine(q, input, output)
+}
+
+async function readLine(
+  q: string,
+  input: Readable = process.stdin,
+  output: Writable = process.stdout,
+): Promise<string> {
+  const rl = createInterface({ input, output })
   try {
-    return await rl.question(q)
+    // Resolve on close as well: with stdin already at EOF (piped input exhausted,
+    // no terminal) question() would otherwise never settle and hang the CLI.
+    return await new Promise<string>((resolve) => {
+      rl.once("close", () => resolve(""))
+      rl.question(q).then(resolve, () => resolve(""))
+    })
   } finally {
     rl.close()
   }

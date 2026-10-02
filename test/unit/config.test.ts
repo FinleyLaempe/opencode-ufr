@@ -27,7 +27,7 @@ describe("config", () => {
       url: "https://raw.githubusercontent.com/FinleyLaempe/opencode-ufr/main/models.json",
       refreshHours: 6,
     })
-    expect(DEFAULTS.transport).toEqual({ type: "direct" })
+    expect(DEFAULTS.transport).toEqual({ type: "auto" })
   })
 
   test("a missing file yields the defaults", async () => {

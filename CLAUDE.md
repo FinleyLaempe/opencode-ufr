@@ -15,7 +15,16 @@ bun test                      # all tests, no network, no VPN, no keyring
 bunx tsc --noEmit             # typecheck
 OPENCODE_UFR_HOME=/tmp/ufr-dev bun src/daemon/main.ts   # run the daemon isolated
 OPENCODE_UFR_HOME=/tmp/ufr-dev bun bin/ufr.ts status
+scripts/release.sh <version>  # bump package.json, commit, tag v<version>, push —
+                              # .github/workflows/release.yml does the rest
 ```
+
+Releases are tag-driven: the workflow verifies on ubuntu/macos/windows,
+publishes to npm in the gated `npm` environment (manual approval in the
+Actions UI), then creates the GitHub release with notes and the packed
+tarball. Prerequisites: repo secret `NPM_TOKEN`, environment `npm` with a
+required reviewer. The workflow fails if the tag does not match
+`package.json`'s version.
 
 `OPENCODE_UFR_HOME` puts config, state, cache and stats under one directory —
 use it for every manual experiment so a real install is never touched.

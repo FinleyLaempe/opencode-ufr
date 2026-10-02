@@ -6,6 +6,10 @@ export interface SecretStore {
 
 export const SERVICE = "opencode-ufr"
 
+/** Keyring aliases for the built-in VPN's uni login (never listed as API keys). */
+export const VPN_USER = "vpn-login"
+export const VPN_PASS = "vpn-pass"
+
 export class SecretStoreError extends Error {}
 
 type Backend = {

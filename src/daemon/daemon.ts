@@ -5,6 +5,7 @@ import { loadConfig, saveConfig } from "../shared/config"
 import { readJson, readText, writeFileAtomic } from "../shared/fs"
 import type { Paths } from "../shared/paths"
 import type { SecretStore } from "../shared/secrets"
+import { VPN_PASS, VPN_USER } from "../shared/secrets"
 import { sleep } from "../shared/sleep"
 import { startOfLocalDay } from "../shared/time"
 import { VERSION } from "../shared/version"
@@ -16,6 +17,7 @@ import { Router } from "./router"
 import { startServer } from "./server"
 import { Stats } from "./stats"
 import { createTransport } from "./transport"
+import { VpnManager } from "./vpn/manager"
 import { SlidingWindow } from "./window"
 
 export class AlreadyRunningError extends Error {
@@ -36,6 +38,7 @@ export type StatusJson = {
   pool: ReturnType<SlidingWindow["snapshot"]>
   breakers: Record<string, { state: BreakerState; level: number; retryAfterMs: number }>
   catalog: { source: ModelsSource | "none"; ufrSource: "remote" | "cache" | "none"; loadedAt: number; models: number; warnings: string[] }
+  vpn: { mode: string; detail: string } | null
   spendToday: Record<string, number>
   dailyBudgetUsd: number
 }
@@ -189,6 +192,23 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       if (secret) keyInfos.push({ alias, secret })
       else log(`key "${alias}" is in config.json but not in the keyring — skipped`)
     }
+
+    // Built-in VPN ("auto" transport): logs in to the uni Fortinet gateway and
+    // tunnels UFR calls through a userspace TCP stack when direct fails.
+    let vpn: VpnManager | null = null
+    if (config.transport.type === "auto") {
+      const [user, pass] = await Promise.all([o.secrets.get(VPN_USER), o.secrets.get(VPN_PASS)])
+      vpn = new VpnManager({
+        gateway: config.vpn.gateway,
+        upstreamHost: new URL(config.upstream.baseUrl).hostname,
+        baseUrl: config.upstream.baseUrl,
+        credentials: user && pass ? { user, pass } : null,
+        mode: config.vpn.mode,
+        log,
+        fetch: f,
+      })
+    }
+    const transport = createTransport(config.transport, { vpn })
     const keys = new KeyPool(keyInfos, {
       cap: config.limits.keyRpm,
       windowMs: config.limits.keyWindowS * 1000,
@@ -257,7 +277,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       const mf = await loadModelsFile({ url: config.catalog.url, cachePath: p.modelsCache, etagPath: p.modelsEtag,
         bundledPath: o.bundledModelsPath, fetch: f, log })
       const ufr = await loadUfrModels({ baseUrl: config.upstream.baseUrl, key: keyInfos[0]?.secret ?? null,
-        cachePath: p.ufrModelsCache, fetch: f, log })
+        cachePath: p.ufrModelsCache, fetch: (u, i) => transport.fetch(u, i), log })
       catalog = buildCatalog(ufr.models, mf.file, { allowPaid: config.allowPaid })
       catalogInfo = { source: mf.source, ufrSource: ufr.source, loadedAt: now() }
       if (ufr.error) Object.assign(reach, { ok: false, message: ufr.error, at: now() })
@@ -276,7 +296,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       pool,
       breakers,
       stats: db,
-      transport: createTransport(config.transport),
+      transport,
       now,
       sleep,
       onUpstream: (ok, message) => Object.assign(reach, { ok, message, at: now() }),
@@ -297,6 +317,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       pool: pool.snapshot(),
       breakers: breakers.states(),
       catalog: { ...catalogInfo, models: catalog.models.size, warnings: catalog.warnings },
+      vpn: vpn ? { mode: vpn.status.mode, detail: vpn.status.detail } : null,
       spendToday: db.spendByKeySince(startOfLocalDay(now())),
       dailyBudgetUsd: config.dailyBudgetUsd,
     })
@@ -314,6 +335,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       }
       server?.stop()
       db.close()
+      await vpn?.stop()
       await rm(p.daemonFile, { force: true })
       await rm(p.lockFile, { force: true })
       releaseLockNonce(p.lockFile)

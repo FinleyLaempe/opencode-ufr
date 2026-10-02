@@ -3,7 +3,8 @@ import { readText, writeFileAtomic } from "./fs"
 export type Config = {
   schema: 1
   port: number | null
-  transport: { type: "direct" }
+  transport: { type: "direct" | "auto" }
+  vpn: { gateway: string; mode: "auto" | "always" }
   upstream: { baseUrl: string; requestTimeoutS: number }
   keys: string[]
   limits: {
@@ -25,7 +26,10 @@ export type Config = {
 export const DEFAULTS: Config = {
   schema: 1,
   port: null,
-  transport: { type: "direct" },
+  // "auto": reach UFR directly when possible, otherwise through the built-in
+  // Fortinet tunnel (needs a stored uni login; behaves like "direct" otherwise).
+  transport: { type: "auto" },
+  vpn: { gateway: "https://fortivpn.uni-freiburg.de", mode: "auto" },
   upstream: { baseUrl: "https://openwebui.uni-freiburg.de/api", requestTimeoutS: 600 },
   keys: [],
   limits: {
@@ -46,11 +50,13 @@ export const DEFAULTS: Config = {
 
 export class ConfigError extends Error {}
 
-type Rule = "int>=0" | "int>=1" | "num>=0" | "bool" | "str" | "port|null" | "aliases" | "int>=1[]" | "direct"
+type Rule = "int>=0" | "int>=1" | "num>=0" | "bool" | "str" | "port|null" | "aliases" | "int>=1[]" | "transport" | "vpnMode"
 
 const RULES: Record<string, Rule> = {
   port: "port|null",
-  "transport.type": "direct",
+  "transport.type": "transport",
+  "vpn.gateway": "str",
+  "vpn.mode": "vpnMode",
   "upstream.baseUrl": "str",
   "upstream.requestTimeoutS": "int>=1",
   keys: "aliases",
@@ -120,8 +126,10 @@ function valid(v: unknown, rule: Rule): boolean {
       return Array.isArray(v) && v.every((s) => typeof s === "string" && ALIAS_RE.test(s))
     case "int>=1[]":
       return Array.isArray(v) && v.length > 0 && v.every((x) => isInt(x) && x >= 1)
-    case "direct":
-      return v === "direct"
+    case "transport":
+      return v === "direct" || v === "auto"
+    case "vpnMode":
+      return v === "auto" || v === "always"
   }
 }
 

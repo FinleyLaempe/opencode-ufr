@@ -1,8 +1,10 @@
 import { fileURLToPath } from "node:url"
 import type { OpencodeStamp } from "../daemon/catalog"
 import { type Paths, resolvePaths } from "../shared/paths"
+import { KeyringStore } from "../shared/secrets"
 import { VERSION } from "../shared/version"
 import { type Conn, ensureDaemon, spawnDaemon } from "./ensure-daemon"
+import { registerConnect } from "./connect"
 import { toModelInfo } from "./model-info"
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../daemon/main.ts", import.meta.url))
@@ -71,8 +73,21 @@ export default {
       })
     })
     log(`registered ${providerId} with ${models.length} models`)
+    // /connect integration: uni login (optional) form on the unifreiburg entry
+    const stopConnect = await registerConnect({
+      ctx,
+      paths,
+      secrets: new KeyringStore(),
+      log,
+    }).catch((e) => {
+      log(`/connect integration failed: ${(e as Error).message}`)
+      return { stop: () => {}, applyNow: async () => false }
+    })
     const beat = setInterval(() => void heartbeat(conn, paths), 60_000)
     ;(beat as { unref?: () => void }).unref?.()
-    return () => clearInterval(beat)
+    return () => {
+      clearInterval(beat)
+      stopConnect.stop()
+    }
   },
 }

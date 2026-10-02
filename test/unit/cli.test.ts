@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { PassThrough } from "node:stream"
 import { type CliDeps, main } from "../../src/cli/index"
 import { diffCatalog } from "../../src/cli/catalog"
-import { readPipedSecret } from "../../src/cli/io"
+import { readLineFrom, readPipedSecret } from "../../src/cli/io"
 import { formatStatus } from "../../src/cli/status"
 import { checkKey } from "../../src/cli/ufr-check"
 import { parseUfrModels } from "../../src/daemon/catalog"
@@ -38,47 +38,20 @@ async function cli(argv: string[], answers: (string | boolean)[] = [], o: { keys
 }
 
 describe("ufr keys", () => {
-  test("add verifies the key with UFR, stores it in the keyring and the alias in config", async () => {
-    const r = await cli(["keys", "add", "main"], ["key-a"])
-    expect(r.code).toBe(0)
-    expect(await env!.secrets.get("main")).toBe("key-a")
-    expect((await loadConfig(env!.paths.configFile)).keys).toEqual(["main"])
-    expect(r.out).toContain("verified")
-    expect(r.out + r.err).not.toContain("key-a")
-  })
-
-  test("add refuses a key UFR rejects", async () => {
-    const r = await cli(["keys", "add", "main"], ["sk-wrong"])
-    expect(r.code).toBe(1)
-    expect(await env!.secrets.get("main")).toBeNull()
-  })
-
-  test("off the VPN, add asks before storing an unverified key", async () => {
-    env = await daemonEnv({ keys: {} })
-    env.ufr.vpnPage = true
-    const r = await cli(["keys", "add", "main"], ["key-a", true])
-    expect(r.code).toBe(0)
-    expect(await env.secrets.get("main")).toBe("key-a")
-  })
-
-  test("add rejects bad aliases", async () => {
-    expect((await cli(["keys", "add", "no spaces"])).code).toBe(2)
-  })
-
   test("list shows stored/missing and never the value; remove deletes both places", async () => {
-    await cli(["keys", "add", "main"], ["key-a"])
+    await cli(["connect", "--keys", "key-a"])
     const listed = await cli(["keys", "list"])
-    expect(listed.out).toContain("main\tstored")
+    expect(listed.out).toContain("key1\tstored")
     expect(listed.out).not.toContain("key-a")
-    expect((await cli(["keys", "remove", "main"])).code).toBe(0)
-    expect(await env!.secrets.get("main")).toBeNull()
+    expect((await cli(["keys", "remove", "key1"])).code).toBe(0)
+    expect(await env!.secrets.get("key1")).toBeNull()
     expect((await loadConfig(env!.paths.configFile)).keys).toEqual([])
   })
 
-  test("add stops an idle running gateway so it restarts with the new keys", async () => {
+  test("connect stops an idle running gateway so it restarts with the new keys", async () => {
     env = await daemonEnv({ keys: {} })
     await env.start()
-    const r = await cli(["keys", "add", "main"], ["key-a"])
+    const r = await cli(["connect", "--keys", "key-a"])
     expect(r.code).toBe(0)
     expect(r.out).toContain("restarts with the new keys when opencode next needs it")
     expect(r.out + r.err).not.toContain("key-a")
@@ -95,7 +68,7 @@ describe("ufr keys", () => {
     expect((await cli(["status"])).out).toContain("not running")
   })
 
-  test("with a request in flight, add leaves the gateway running and says to run `ufr stop` later", async () => {
+  test("with a request in flight, connect leaves the gateway running and says to run `ufr stop` later", async () => {
     env = await daemonEnv({ keys: { main: "key-a" } })
     const d = await env.start()
     env.ufr.delayMs = 1_000
@@ -104,7 +77,7 @@ describe("ufr keys", () => {
       body: JSON.stringify({ model: "glm-5.2-llmlb", messages: [{ role: "user", content: "Hi" }] }),
     })
     for (let t = 0; t < 40 && d.router.inFlight === 0; t++) await Bun.sleep(10)
-    const r = await cli(["keys", "add", "alt"], ["key-b"])
+    const r = await cli(["connect", "--keys", "key-b"])
     expect(r.code).toBe(0)
     expect(r.out).toContain("run `ufr stop` later")
     await Bun.sleep(200)
@@ -113,10 +86,10 @@ describe("ufr keys", () => {
   })
 
   test("test labels every key", async () => {
-    await cli(["keys", "add", "main"], ["key-a"])
+    await cli(["connect", "--keys", "key-a"])
     const r = await cli(["keys", "test"])
     expect(r.code).toBe(0)
-    expect(r.out).toContain("main\tok")
+    expect(r.out).toContain("key1\tok")
   })
 })
 
@@ -141,6 +114,12 @@ describe("terminal io", () => {
       process.stdout.write = write
     }
     expect(stdout.join("")).not.toContain("sk-secret-123")
+  })
+
+  test("a prompt on already-closed stdin resolves empty instead of hanging", async () => {
+    const input = new PassThrough()
+    input.end()
+    expect(await readLineFrom("y/N? ", input, new PassThrough())).toBe("")
   })
 })
 
@@ -168,6 +147,7 @@ describe("ufr status / stats / catalog / stop", () => {
       pool: { enabled: true, cap: 800, windowMs: 3_600_000, inWindow: 12, admitted: 12, queued: 0, rejected: 0 },
       breakers: { "glm-5.2-llmlb": { state: "open", level: 1, retryAfterMs: 95_000 } },
       catalog: { source: "remote", ufrSource: "cache", loadedAt: 0, models: 34, warnings: ["x: no price"] },
+      vpn: null,
       spendToday: { main: 0.1069 },
       dailyBudgetUsd: 20,
     })
@@ -249,37 +229,23 @@ describe("checkKey VPN classification (ruling R12)", () => {
   })
 })
 
-describe("ufr setup", () => {
-  test("adds a key, checks chat, offers the opencode registration", async () => {
-    const r = await cli(["setup"], ["main", "key-a", false, true])
-    expect(r.code).toBe(0)
-    expect(r.left).toBe(0)
-    expect(await env!.secrets.get("main")).toBe("key-a")
-    expect(r.out).toContain("UFR chat reachable")
-    expect(r.opencodeCalls).toEqual([["plugin", "add", "github:FinleyLaempe/opencode-ufr"]])
-  })
-
-  test("setup stops an idle running gateway once, after all keys are added", async () => {
-    env = await daemonEnv({ keys: {} })
-    await env.start()
-    const r = await cli(["setup"], ["main", "key-a", true, "alt", "key-b", false, false])
-    expect(r.code).toBe(0)
-    expect(r.out.split("restarts with the new keys").length - 1).toBe(1)
-    await Bun.sleep(200)
-    expect((await cli(["status"])).out).toContain("not running")
-  })
-
-  test("off the VPN setup explains what to do", async () => {
-    env = await daemonEnv({ keys: {} })
-    env.ufr.vpnPage = true
-    const r = await cli(["setup"], ["main", "key-a", true, false, false])
-    expect(r.out).toContain("VPN")
+describe("ufr login — inspect and remove", () => {
+  test("show reports an absent login; remove clears it", async () => {
+    expect((await cli(["login", "show"])).code).toBe(1)
+    await cli(["connect", "--login", "fl240@uni-freiburg.de", "--password", "pw", "--keys", "key-a"])
+    const shown = await cli(["login", "show"])
+    expect(shown.code).toBe(0)
+    expect(shown.out).toContain("fl240@uni-freiburg.de")
+    expect(shown.out).toContain("password stored")
+    expect(shown.out).not.toContain("pw")
+    expect((await cli(["login", "remove"])).code).toBe(0)
+    expect(await env!.secrets.get("vpn-login")).toBeNull()
   })
 })
 
 describe("ufr", () => {
   test("help and unknown commands", async () => {
-    expect((await cli([])).out).toContain("ufr setup")
+    expect((await cli([])).out).toContain("ufr connect")
     expect((await cli(["frobnicate"])).code).toBe(2)
   })
 })

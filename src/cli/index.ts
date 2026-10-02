@@ -3,9 +3,9 @@ import type { FetchLike } from "../daemon/catalog-source"
 import { type Paths, resolvePaths } from "../shared/paths"
 import { KeyringStore, type SecretStore } from "../shared/secrets"
 import { cmdCatalogDiff } from "./catalog"
+import { cmdConnect } from "./connect"
 import { type Io, terminalIo } from "./io"
-import { cmdKeys } from "./keys"
-import { cmdSetup } from "./setup"
+import { cmdKeys, cmdLogin } from "./keys"
 import { cmdStats } from "./stats"
 import { cmdStatus } from "./status"
 import { cmdStop } from "./stop"
@@ -21,9 +21,12 @@ export type CliDeps = {
 
 const HELP = `ufr — opencode-ufr gateway
 
-  ufr setup                        guided first-run setup
-  ufr keys add <alias>             store a UFR API key in the OS keyring
-  ufr keys list | remove <alias> | test [alias]
+  ufr connect                      set everything up in one call: API keys
+                                   [--keys "<k1>,<k2>"] (comma/newline separated,
+                                   whitespace filtered), optional uni login for the
+                                   built-in VPN [--login <u> --password <p>]
+  ufr keys list | remove <alias> | test [alias]   manage stored keys
+  ufr login show | remove          the uni login for the built-in VPN
   ufr status                       gateway, keys, limits, breakers, spend today
   ufr stats [--days N]             requests, tokens and cost (default: today)
   ufr catalog diff                 UFR's model list vs. models.json
@@ -50,10 +53,12 @@ export async function main(argv: string[], partial: Partial<CliDeps> = {}): Prom
   const [cmd, ...rest] = argv
   try {
     switch (cmd) {
-      case "setup":
-        return await cmdSetup(d)
+      case "connect":
+        return await cmdConnect(d, rest)
       case "keys":
         return await cmdKeys(d, rest)
+      case "login":
+        return await cmdLogin(d, rest)
       case "status":
         return await cmdStatus(d)
       case "stats": {
