@@ -39,6 +39,9 @@ jobs:
     # The "npm" environment (with a required reviewer) gates this job:
     # publishing waits for manual approval in the Actions run.
     environment: npm
+    permissions:
+      id-token: write # OIDC trusted publishing — no NPM_TOKEN needed
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -58,10 +61,17 @@ jobs:
       - run: bun install --frozen-lockfile
 
       # prepublishOnly runs typecheck + test again on the publish machine.
+      # OIDC trusted publishing: npm ≥ 11.5.1 exchanges the Actions id-token
+      # automatically — the package's trusted publisher config on npmjs.com
+      # (repo + workflow filename + environment) must match this workflow.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
       - name: publish to npm
-        run: bun publish --tag latest
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --tag latest
 
   github-release:
     needs: publish
