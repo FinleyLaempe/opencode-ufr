@@ -9,7 +9,7 @@
 
 import { applyConnect, splitKeys } from "../shared/connect"
 import type { Paths } from "../shared/paths"
-import { applyKeyChange } from "../cli/keys"
+import { applyKeyChange, disconnectAll } from "../cli/keys"
 
 export const UFR_INTEGRATION_ID = "unifreiburg"
 
@@ -18,6 +18,11 @@ export type ConnectDeps = {
   paths: Paths
   secrets: { get(alias: string): Promise<string | null>; set(alias: string, value: string): Promise<void>; delete(alias: string): Promise<boolean> }
   log: (m: string) => void
+  /** (Re-)registers the provider with opencode — called on first connect and after a removal+reconnect.
+   *  Returns false when the registration did not succeed (e.g. no models yet); the watcher retries. */
+  register?: () => Promise<boolean | void> | boolean | void
+  /** Whether setup() already registered the provider (it does when a connection exists at startup). */
+  providerRegistered?: boolean
 }
 
 type CredentialValue = { type?: string; key?: string; configuration?: Record<string, unknown> } | undefined
@@ -73,28 +78,52 @@ export async function registerConnect(d: ConnectDeps): Promise<ConnectRegistrati
     })
   })
 
-  // Apply a submitted credential once, then watch for changes.
+  // Apply a submitted credential once, then watch for changes. Phases:
+  // "registered" (provider live), "unregistered" (no provider yet), and
+  // "disconnected" (the connection was removed in opencode — everything
+  // wiped; a later connection re-applies and re-registers).
+  type Phase = "registered" | "unregistered" | "disconnected"
+  let phase: Phase = d.providerRegistered ? "registered" : "unregistered"
   let lastApplied = ""
   const applyOnce = async (): Promise<boolean> => {
     try {
       const connection = await ctx.integration.connection.active(UFR_INTEGRATION_ID)
-      if (!connection) return false
+      if (!connection) {
+        if (phase === "registered") {
+          phase = "disconnected"
+          lastApplied = ""
+          const r = await disconnectAll({ paths: d.paths, secrets: d.secrets, fetch: (u, i) => fetch(u, i), log: d.log })
+          d.log(`unifreiburg removed in opencode — wiped from keyring: ${r.removed.length > 0 ? r.removed.join(", ") : "nothing"}${r.loginRemoved ? " + uni login" : ""}`)
+          return true // the disconnect cleaned something up — a state change
+        }
+        return false
+      }
       const cred = (await ctx.integration.connection.resolve(connection)) as CredentialValue
       const sig = JSON.stringify(cred?.configuration ?? {}) + "|" + (cred?.key ?? "")
-      if (sig === lastApplied) return false
-      lastApplied = sig
-      const input = credentialToInput(cred)
-      if (!input) {
-        d.log("/connect credential has no keys — nothing applied")
-        return false
+      let changed = false
+      if (sig !== lastApplied) {
+        lastApplied = sig
+        const input = credentialToInput(cred)
+        if (!input) {
+          d.log("/connect credential has no keys — nothing applied")
+          return false
+        }
+        const r = await applyConnect(input, { paths: d.paths, secrets: d.secrets, log: d.log })
+        if (r.errors.length > 0) {
+          for (const e of r.errors) d.log(`/connect: ${e}`)
+          lastApplied = "" // retry on the next poll
+          return false
+        }
+        if (r.changed) await applyKeyChange({ paths: d.paths, fetch: (u, i) => fetch(u, i), log: d.log })
+        changed = true
       }
-      const r = await applyConnect(input, { paths: d.paths, secrets: d.secrets, log: d.log })
-      if (r.errors.length > 0) {
-        for (const e of r.errors) d.log(`/connect: ${e}`)
-        return false
+      if (phase !== "registered") {
+        // first connect mid-session, or a reconnect after a removal
+        const ok = await d.register?.()
+        if (ok !== false) phase = "registered" // false = registration failed — retry on the next poll
+        changed = true
       }
-      await applyKeyChange({ paths: d.paths, fetch: (u, i) => fetch(u, i), log: d.log })
-      return true
+      return changed
     } catch (e) {
       d.log(`/connect apply failed: ${(e as Error).message}`)
       return false

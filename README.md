@@ -60,7 +60,15 @@ ufr stats        # requests, tokens and cost
 ufr keys list    # stored aliases
 ufr keys test    # check your keys against UFR
 ufr login show   # the stored uni login
+ufr disconnect   # remove everything: keys, uni login, config, gateway
 ```
+
+Removing the **unifreiburg** integration in opencode's `/connect` panel does the
+same as `ufr disconnect`: the stored keys and uni login are wiped, the gateway
+stops, and the models disappear from the picker on the next opencode start.
+While opencode runs, the removal is noticed within a minute. If opencode was
+closed when you removed the integration, run `ufr disconnect` once to wipe what
+is left.
 
 ## The built-in VPN
 

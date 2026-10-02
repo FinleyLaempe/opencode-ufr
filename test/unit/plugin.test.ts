@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { ensureDaemon, isNewer } from "../../src/plugin/ensure-daemon"
-import plugin from "../../src/plugin/index"
+import { heartbeat, default as plugin } from "../../src/plugin/index"
 import { VERSION } from "../../src/shared/version"
 import { daemonEnv } from "../support/daemon-env"
 
@@ -90,5 +90,33 @@ describe("plugin setup", () => {
     const { ctx, added } = fakeCtx()
     await plugin.setup(ctx)
     expect(added).toHaveLength(0)
+  })
+})
+
+describe("plugin setup: connection gating", () => {
+  test("not connected → registers nothing and starts no daemon", async () => {
+    env = await daemonEnv({ keys: {} })
+    process.env.OPENCODE_UFR_HOME = env.home
+    const added: any[] = []
+    const ctx = {
+      options: { providerId: "ufr-test" },
+      provider: { transform: async (fn: (editor: any) => void) => fn({ add: (x: any) => added.push(x) }) },
+      integration: {
+        transform: async () => {},
+        connection: { active: async () => undefined },
+      },
+    }
+    const cleanup = await plugin.setup(ctx)
+    if (typeof cleanup === "function") cleanup()
+    expect(added).toHaveLength(0)
+    expect(await Bun.file(env.paths.daemonFile).exists()).toBe(false)
+  })
+
+  test("heartbeat leaves the daemon down when the connection is gone", async () => {
+    env = await daemonEnv({ keys: {} })
+    process.env.OPENCODE_UFR_HOME = env.home
+    const ctx = { integration: { connection: { active: async () => undefined } } }
+    await heartbeat(ctx, env.paths)
+    expect(await Bun.file(env.paths.daemonFile).exists()).toBe(false)
   })
 })

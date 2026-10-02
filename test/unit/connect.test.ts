@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { type CliDeps, main } from "../../src/cli/index"
+import { daemonRequest } from "../../src/cli/daemon-client"
+import { disconnectAll } from "../../src/cli/keys"
 import { loadConfig } from "../../src/shared/config"
 import { daemonEnv } from "../support/daemon-env"
 import { testIo } from "../support/io"
@@ -91,5 +93,71 @@ describe("ufr connect", () => {
     expect(await env!.secrets.get("key1")).toBeNull()
     expect(await env!.secrets.get("key2")).toBe("key-a")
     expect(r.err).toContain("INVALID")
+  })
+})
+
+describe("disconnectAll (provider removal)", () => {
+  test("wipes every stored key, the uni login and config.keys, and stops an idle gateway", async () => {
+    env = await daemonEnv({ keys: { key1: "k1", "ufr-A": "ka" } })
+    await env.secrets.set("vpn-login", "fl240@uni-freiburg.de")
+    await env.secrets.set("vpn-pass", "pw")
+    await env.start() // a running gateway must be stopped by the wipe
+    const logs: string[] = []
+    const r = await disconnectAll({ paths: env.paths, secrets: env.secrets, fetch: (u, i) => fetch(u, i), log: (m) => logs.push(m) })
+    expect(r.removed).toEqual(["key1", "ufr-A"])
+    expect(r.loginRemoved).toBe(true)
+    expect(await env.secrets.get("key1")).toBeNull()
+    expect(await env.secrets.get("ufr-A")).toBeNull()
+    expect(await env.secrets.get("vpn-login")).toBeNull()
+    expect(await env.secrets.get("vpn-pass")).toBeNull()
+    expect((await loadConfig(env.paths.configFile)).keys).toEqual([])
+    // the gateway stops asynchronously (20 ms after the shutdown answer) — poll for it
+    const gone = async () => {
+      for (let i = 0; i < 100; i++) {
+        const status = await daemonRequest(env!.paths, (u, i) => fetch(u, i), "/v1/_status")
+        if (!(status?.ok ?? false)) return true
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      return false
+    }
+    expect(await gone()).toBe(true)
+  })
+
+  test("nothing stored → a no-op that leaves a clean config", async () => {
+    env = await daemonEnv({ keys: {} })
+    const r = await disconnectAll({ paths: env.paths, secrets: env.secrets, fetch: (u, i) => fetch(u, i), log: () => {} })
+    expect(r.removed).toEqual([])
+    expect(r.loginRemoved).toBe(false)
+    expect((await loadConfig(env.paths.configFile)).keys).toEqual([])
+  })
+})
+
+describe("ufr disconnect", () => {
+  test("wipes keys, the uni login and config.keys, and reports what went", async () => {
+    env = await daemonEnv({ keys: { key1: "k1" } })
+    await env.secrets.set("vpn-login", "fl240@uni-freiburg.de")
+    await env.secrets.set("vpn-pass", "pw")
+    const t = testIo([])
+    const code = await main(["disconnect"], {
+      paths: env.paths,
+      secrets: env.secrets,
+      io: t.io,
+      fetch: (u, i) => fetch(u, i),
+      now: Date.now,
+      runOpencode: async () => 0,
+    })
+    expect(code).toBe(0)
+    expect(await env.secrets.get("key1")).toBeNull()
+    expect(await env.secrets.get("vpn-login")).toBeNull()
+    expect(await env.secrets.get("vpn-pass")).toBeNull()
+    expect((await loadConfig(env.paths.configFile)).keys).toEqual([])
+    expect(t.out()).toContain("key1")
+    expect(t.out()).toContain("uni login")
+  })
+
+  test("nothing stored → still exit 0", async () => {
+    const r = await cli(["disconnect"])
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("nothing")
   })
 })

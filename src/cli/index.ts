@@ -5,7 +5,7 @@ import { KeyringStore, type SecretStore } from "../shared/secrets"
 import { cmdCatalogDiff } from "./catalog"
 import { cmdConnect } from "./connect"
 import { type Io, terminalIo } from "./io"
-import { cmdKeys, cmdLogin } from "./keys"
+import { cmdDisconnect, cmdKeys, cmdLogin } from "./keys"
 import { cmdStats } from "./stats"
 import { cmdStatus } from "./status"
 import { cmdStop } from "./stop"
@@ -25,6 +25,8 @@ const HELP = `ufr — opencode-ufr gateway
                                    [--keys "<k1>,<k2>"] (comma/newline separated,
                                    whitespace filtered), optional uni login for the
                                    built-in VPN [--login <u> --password <p>]
+  ufr disconnect                   remove everything: stored keys, uni login,
+                                   config and the running gateway
   ufr keys list | remove <alias> | test [alias]   manage stored keys
   ufr login show | remove          the uni login for the built-in VPN
   ufr status                       gateway, keys, limits, breakers, spend today
@@ -55,6 +57,8 @@ export async function main(argv: string[], partial: Partial<CliDeps> = {}): Prom
     switch (cmd) {
       case "connect":
         return await cmdConnect(d, rest)
+      case "disconnect":
+        return await cmdDisconnect(d)
       case "keys":
         return await cmdKeys(d, rest)
       case "login":

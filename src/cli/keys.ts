@@ -1,6 +1,6 @@
 import { loadConfig, saveConfig } from "../shared/config"
 import type { Paths } from "../shared/paths"
-import { VPN_PASS, VPN_USER } from "../shared/secrets"
+import { VPN_PASS, VPN_USER, type SecretStore } from "../shared/secrets"
 import { daemonRequest } from "./daemon-client"
 import type { FetchLike } from "../daemon/catalog-source"
 import type { CliDeps } from "./index"
@@ -27,6 +27,41 @@ export async function applyKeyChange(d: { paths: Paths; fetch: FetchLike; log: (
   const stopped = await daemonRequest(d.paths, d.fetch, "/v1/_shutdown", "POST")
   d.log(stopped?.ok ? "gateway stopped — it restarts with the new keys when opencode next needs it"
     : "could not stop the gateway — run `ufr stop` so it picks up the new keys")
+}
+
+export type DisconnectResult = { removed: string[]; loginRemoved: boolean }
+
+/**
+ * Provider-removal cleanup: delete every stored key alias and the uni login
+ * from the keyring, clear config.keys, and stop an idle gateway (it reads its
+ * keys at start, so a later start serves nothing). Idempotent.
+ */
+export async function disconnectAll(d: {
+  paths: Paths
+  secrets: SecretStore
+  fetch: FetchLike
+  log: (m: string) => void
+}): Promise<DisconnectResult> {
+  const cfg = await loadConfig(d.paths.configFile)
+  const removed: string[] = []
+  for (const alias of cfg.keys) {
+    if (await d.secrets.delete(alias)) removed.push(alias)
+  }
+  const userRemoved = await d.secrets.delete(VPN_USER)
+  const passRemoved = await d.secrets.delete(VPN_PASS)
+  const loginRemoved = userRemoved || passRemoved
+  cfg.keys = []
+  await saveConfig(d.paths.configFile, cfg)
+  await applyKeyChange(d)
+  return { removed, loginRemoved }
+}
+
+export async function cmdDisconnect(d: CliDeps): Promise<number> {
+  const r = await disconnectAll({ paths: d.paths, secrets: d.secrets, fetch: d.fetch, log: (m) => d.io.out(m + "\n") })
+  d.io.out(r.removed.length > 0 ? `removed from keyring: ${r.removed.join(", ")}\n` : "nothing was stored\n")
+  if (r.loginRemoved) d.io.out("removed the uni login\n")
+  d.io.out("done — reconnect any time with `ufr connect` or /connect in opencode\n")
+  return 0
 }
 
 export async function cmdKeys(d: CliDeps, args: string[]): Promise<number> {

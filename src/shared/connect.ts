@@ -43,6 +43,8 @@ export type ConnectApplied = {
   aliases: { alias: string; key: string }[]
   removedAliases: string[]
   loginStored: boolean
+  /** False when the submission was byte-identical to what is already stored — no gateway restart needed. */
+  changed: boolean
   errors: string[]
 }
 
@@ -60,15 +62,16 @@ export async function applyConnect(
   const keys = splitKeys(input.keys)
   if (keys.length === 0) {
     errors.push("no keys given")
-    return { aliases: [], removedAliases: [], loginStored: false, errors }
+    return { aliases: [], removedAliases: [], loginStored: false, changed: false, errors }
   }
   if (input.login && !EMAIL_RE.test(input.login.trim())) {
     errors.push(`"${input.login}" does not look like a uni login`)
-    return { aliases: [], removedAliases: [], loginStored: false, errors }
+    return { aliases: [], removedAliases: [], loginStored: false, changed: false, errors }
   }
 
   const cfg = await loadConfig(o.paths.configFile)
   const custom = cfg.keys.filter((k) => !/^key\d+$/.test(k))
+  const beforeKeys = cfg.keys.join("\n")
 
   // replace the managed key1…keyN aliases
   const removedAliases: string[] = []
@@ -80,15 +83,21 @@ export async function applyConnect(
     }
   }
   const aliases: { alias: string; key: string }[] = []
+  let changed = beforeKeys !== [...custom, ...wanted].join("\n") || removedAliases.length > 0
   for (let i = 0; i < keys.length; i++) {
     const alias = wanted[i]!
+    if ((await o.secrets.get(alias)) !== keys[i]!) changed = true
     await o.secrets.set(alias, keys[i]!)
     aliases.push({ alias, key: keys[i]! })
   }
 
   let loginStored = false
   if (input.login?.trim()) {
-    await o.secrets.set(VPN_USER, input.login.trim())
+    const login = input.login.trim()
+    if ((await o.secrets.get(VPN_USER)) !== login || (input.password && (await o.secrets.get(VPN_PASS)) !== input.password)) {
+      changed = true
+    }
+    await o.secrets.set(VPN_USER, login)
     if (input.password) await o.secrets.set(VPN_PASS, input.password)
     loginStored = true
   }
@@ -96,5 +105,5 @@ export async function applyConnect(
   cfg.keys = [...custom, ...wanted]
   await saveConfig(o.paths.configFile, cfg)
   log(`connect applied: ${aliases.length} key(s), login ${loginStored ? "stored" : "unchanged"}`)
-  return { aliases, removedAliases, loginStored, errors }
+  return { aliases, removedAliases, loginStored, changed, errors }
 }
