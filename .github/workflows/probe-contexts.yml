@@ -5,9 +5,15 @@ name: probe contexts
 # back to main. Runs weekly, on demand, and after every release tag so the
 # next release always ships fresh values.
 #
-# One-time repo setup: Settings → Secrets → Actions → UFR_PROBE_KEY
-# (a normal UFR API key; use a dedicated/test account key — accepted probe
-# rungs spend that account's $20/day budget, rejected ones are free).
+# GitHub-hosted runners are not in the uni network, so the probes go through
+# the built-in Fortinet tunnel (--vpn).
+#
+# One-time repo setup: Settings → Secrets → Actions →
+#   UFR_PROBE_KEY      a normal UFR API key (dedicated/test account key is
+#                      best — accepted probe rungs spend that account's
+#                      $20/day budget, rejected ones are free)
+#   UFR_VPN_LOGIN      uni login, e.g. xx0000@uni-freiburg.de
+#   UFR_VPN_PASSWORD   the matching uni password
 
 on:
   schedule:
@@ -31,10 +37,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.x"
-      - name: probe all models
-        run: bun scripts/probe-all-contexts.ts --key-env UFR_PROBE_KEY --write
+      - name: probe all models (through the built-in VPN)
+        run: bun scripts/probe-all-contexts.ts --key-env UFR_PROBE_KEY --vpn --write
         env:
           UFR_PROBE_KEY: ${{ secrets.UFR_PROBE_KEY }}
+          UFR_VPN_LOGIN: ${{ secrets.UFR_VPN_LOGIN }}
+          UFR_VPN_PASSWORD: ${{ secrets.UFR_VPN_PASSWORD }}
       - name: commit refreshed models.json
         run: |
           git config user.name "ufr-probe-bot"

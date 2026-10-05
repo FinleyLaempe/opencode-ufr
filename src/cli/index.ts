@@ -33,9 +33,11 @@ const HELP = `ufr — opencode-ufr gateway
   ufr status                       gateway, keys, limits, breakers, spend today
   ufr stats [--days N]             requests, tokens and cost (default: today)
   ufr catalog diff                 UFR's model list vs. models.json
-  ufr context-probe [--write]      measure every model's context limit live
+  ufr context-probe [--write] [--vpn]
+                                   measure every model's context limit live
                                    (rejected probes are free; --write patches
-                                   the local models.json)
+                                   the local models.json; --vpn routes the
+                                   probes through the built-in tunnel)
   ufr stop                         stop the gateway (opencode starts it again)
 
 UFR needs the uni VPN off campus: https://wiki.uni-freiburg.de/rz/doku.php?id=vpn
