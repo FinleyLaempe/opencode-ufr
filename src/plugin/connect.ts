@@ -63,7 +63,7 @@ export async function registerConnect(d: ConnectDeps): Promise<ConnectRegistrati
       integrationID: UFR_INTEGRATION_ID,
       method: {
         type: "key",
-        label: "API keys (comma-separated) + optional uni login",
+        label: "API keys (comma-separated)",
         form: [
           {
             key: "login",
