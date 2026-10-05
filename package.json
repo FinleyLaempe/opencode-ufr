@@ -1,6 +1,6 @@
 {
   "name": "opencode-ufr",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Uni Freiburg (UFR) Open WebUI models in opencode — local gateway with key pool, UFR-aware rate limiting, circuit breaker and fallbacks",
   "license": "MIT",
   "type": "module",
