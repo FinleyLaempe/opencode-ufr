@@ -13,6 +13,7 @@ const FILE: ModelsFile = {
     "small-llmlb": { context: 131_072 },
     "grown-llmlb": { context: 131_072 },
     "unknown-llmlb": {},
+    "noisy-llmlb": { context: 262_144 },
   },
 }
 
@@ -114,31 +115,35 @@ describe("probeAllContexts", () => {
 })
 
 describe("report and models.json application", () => {
-  test("report flags NEW and MISMATCH", () => {
+  test("report flags NEW and MISMATCH, tolerates sub-1% noise", () => {
     const report = formatProbeReport([
       { id: "a-llmlb", tier: "free", known: 131_072, probed: 131_072, how: "error-named" },
       { id: "b-llmlb", tier: "free", known: 100_000, probed: 262_144, how: "error-named" },
       { id: "c-llmlb", tier: "free", known: null, probed: 8_192, how: "error-named" },
-      { id: "d-llmlb", tier: "paid", known: null, probed: null, how: "skipped-paid" },
+      { id: "d-llmlb", tier: "free", known: 262_144, probed: 261_144, how: "error-named" },
+      { id: "e-llmlb", tier: "paid", known: null, probed: null, how: "skipped-paid" },
     ])
     expect(report).toContain("ok")
     expect(report).toContain("MISMATCH (was 100,000)")
     expect(report).toContain("NEW — needs models.json entry")
+    expect(report).toContain("ok (±1,000)") // output-reservation noise, not a context change
     expect(report).toContain("skipped-paid")
-    expect(report).toContain("4 models, 2 needing a models.json update")
+    expect(report).toContain("5 models, 2 needing a models.json update")
   })
 
-  test("applyProbeResults updates drifted values, keeps notes, ignores floors", () => {
+  test("applyProbeResults updates drifted values, keeps notes, ignores floors and sub-1% noise", () => {
     const rows = [
       { id: "grown-llmlb", tier: "free" as const, known: 131_072, probed: 262_144, how: "error-named" as const },
       { id: "small-llmlb", tier: "free" as const, known: 131_072, probed: 131_072, how: "error-named" as const },
       { id: "unknown-llmlb", tier: "free" as const, known: null, probed: 300_000, how: "accepted-floor" as const },
+      { id: "noisy-llmlb", tier: "free" as const, known: 262_144, probed: 261_144, how: "error-named" as const },
     ]
     const { file, changed } = applyProbeResults(FILE, rows, "2026-10-05")
     expect(changed).toEqual([{ id: "grown-llmlb", from: 131_072, to: 262_144 }])
     expect(file.models["grown-llmlb"]!.context).toBe(262_144)
     expect(file.models["grown-llmlb"]!.note).toContain("probed live 2026-10-05")
     expect(file.models["unknown-llmlb"]!.context).toBeUndefined() // accepted floor must not write
+    expect(file.models["noisy-llmlb"]!.context).toBe(262_144) // within tolerance — untouched
     expect(file.updated).toBe("2026-10-05")
     expect(JSON.parse(JSON.stringify(file)).models["small-llmlb"].context).toBe(131_072)
   })

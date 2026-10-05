@@ -34,6 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main # tag triggers check out a detached HEAD — commits must land on main
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.x"

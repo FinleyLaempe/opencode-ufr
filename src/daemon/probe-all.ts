@@ -20,6 +20,17 @@ import { fillerForTokens, parseLimitFromBody } from "./probe"
 /** No UFR model is known to exceed this; probing higher only risks an accepted (paid) rung. */
 export const PROBE_CEILING = 1_600_000
 
+/**
+ * Sub-1% deltas are noise, not context changes: some backends name the
+ * input-only limit (context minus reserved output tokens), so the same model
+ * can answer 262,144 locally and 261,144 from CI (observed 2026-10-05).
+ * Without a tolerance the weekly run would flip-flop such values forever.
+ */
+export const PROBE_TOLERANCE = 0.01
+
+export const withinTolerance = (probed: number, known: number): boolean =>
+  Math.abs(probed - known) / known < PROBE_TOLERANCE
+
 export type ProbeHow =
   | "error-named" // the server named the exact limit — the trustworthy result
   | "accepted-floor" // every rung up to `probed` was accepted — `probed` is a lower bound only
@@ -152,7 +163,11 @@ export function formatProbeReport(rows: ProbeRow[]): string {
     const context = r.probed === null ? "—" : r.probed.toLocaleString("en-US")
     const status =
       r.how === "error-named" && r.probed !== null
-        ? r.known === null ? "NEW — needs models.json entry" : r.probed === r.known ? "ok" : `MISMATCH (was ${r.known.toLocaleString("en-US")})`
+        ? r.known === null
+          ? "NEW — needs models.json entry"
+          : withinTolerance(r.probed, r.known)
+            ? r.probed === r.known ? "ok" : `ok (±${Math.abs(r.probed - r.known).toLocaleString("en-US")})`
+            : `MISMATCH (was ${r.known.toLocaleString("en-US")})`
         : r.how
     if (status.startsWith("NEW") || status.startsWith("MISMATCH")) mismatches++
     lines.push(pad(r.id, 38) + pad(context, 12) + pad(r.how, 17) + pad(r.known === null ? "—" : r.known.toLocaleString("en-US"), 12) + status)
@@ -180,7 +195,7 @@ export function applyProbeResults(
     if (r.how !== "error-named" || r.probed === null) continue
     const e = (out.models[r.id] ??= {})
     const from = e.context ?? null
-    if (from === r.probed) continue
+    if (from === r.probed || (from !== null && withinTolerance(r.probed, from))) continue
     e.context = r.probed
     const probeNote = `context ${r.probed} probed live ${date} (probe-all-contexts)`
     e.note = e.note?.includes("probed live") ? probeNote : e.note ? `${e.note} | ${probeNote}` : probeNote
