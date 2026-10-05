@@ -54,6 +54,7 @@ use it for every manual experiment so a real install is never touched.
 | no `cached_tokens`, no cost or rate-limit headers; streams send a `usage` chunk when `stream_options.include_usage` is set | 2026-09-28 |
 | portal shows spend only as % of $20/day per key, two decimals | 2026-09-28 |
 | UFR's server clock runs ~70 s fast | 2026-09-28 |
+| context probe: one oversized request is refused **before pricing** (740 ms, x-process-time 0) and names the exact limit — rejected probes are free and don't consume the key bucket | 2026-10-05 |
 
 ## Rules
 

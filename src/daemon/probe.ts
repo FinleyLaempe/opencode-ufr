@@ -26,7 +26,7 @@ export function parseLimitFromBody(body: string): number | null {
 }
 
 /** Prompt filler: ~4.5 chars per token for prose-like text. */
-function fillerForTokens(tokens: number): string {
+export function fillerForTokens(tokens: number): string {
   return "The quick brown fox jumps over the lazy dog. ".repeat(Math.ceil((tokens * 4.5) / 45))
 }
 

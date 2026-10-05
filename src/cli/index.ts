@@ -4,6 +4,7 @@ import { type Paths, resolvePaths } from "../shared/paths"
 import { KeyringStore, type SecretStore } from "../shared/secrets"
 import { cmdCatalogDiff } from "./catalog"
 import { cmdConnect } from "./connect"
+import { cmdContextProbe } from "./context-probe"
 import { type Io, terminalIo } from "./io"
 import { cmdDisconnect, cmdKeys, cmdLogin } from "./keys"
 import { cmdStats } from "./stats"
@@ -32,6 +33,9 @@ const HELP = `ufr — opencode-ufr gateway
   ufr status                       gateway, keys, limits, breakers, spend today
   ufr stats [--days N]             requests, tokens and cost (default: today)
   ufr catalog diff                 UFR's model list vs. models.json
+  ufr context-probe [--write]      measure every model's context limit live
+                                   (rejected probes are free; --write patches
+                                   the local models.json)
   ufr stop                         stop the gateway (opencode starts it again)
 
 UFR needs the uni VPN off campus: https://wiki.uni-freiburg.de/rz/doku.php?id=vpn
@@ -78,6 +82,8 @@ export async function main(argv: string[], partial: Partial<CliDeps> = {}): Prom
         if (rest[0] === "diff") return await cmdCatalogDiff(d)
         d.io.err("usage: ufr catalog diff\n")
         return 2
+      case "context-probe":
+        return await cmdContextProbe(d, rest)
       case "stop":
         return await cmdStop(d)
       case undefined:

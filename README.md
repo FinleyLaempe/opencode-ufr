@@ -23,7 +23,7 @@ opencode plugin add opencode-ufr     # registers the plugin
 
 (or add `"plugins": ["opencode-ufr"]` to your `opencode.json` manually.)
 
-## Updating
+## Install
 
 opencode installs the plugin once into its cache and does not look for a newer
 version while that copy exists — restarting opencode alone keeps the old one.
@@ -34,7 +34,7 @@ and stop that server:
 ```bash
 bun add -g opencode-ufr@latest                      # update the `ufr` CLI
 rm -rf ~/.cache/opencode/npm/opencode-ufr@latest    # opencode's cached plugin copy
-pkill -f "opencode serve --service"                 # opencode's background server
+/restart in opencode eintippen                      # opencode's background server
 ```
 
 The next opencode start installs the latest version and replaces the old
@@ -207,10 +207,20 @@ the GitHub release after a maintainer approves the staged version with 2FA.
 
 ## Model data
 
-The gateway fetches `models.json` from this repository every 6 hours —
-context windows, prices, vision/tool flags, alias spellings and fallback
-order that UFR's own API doesn't expose or gets wrong. Fixes reach every
-user without a release.
+`models.json` ships with every release — context windows, prices,
+vision/tool flags, alias spellings and fallback order that UFR's own API
+doesn't expose or gets wrong. Fixes reach users with the next plugin update.
+
+Context windows are measured, not guessed: the `probe contexts` workflow
+(weekly, on demand, and after every release tag) sends one oversized — and
+therefore free, since UFR rejects it before pricing — request per model and
+commits the exact limit the server names back to `models.json` on main. Run
+it yourself with a stored key:
+
+```bash
+ufr context-probe            # report: measured context vs. models.json
+ufr context-probe --write    # also patch your local models.json
+```
 
 To contribute a measurement (a price, a context window, a missing alias),
 open a PR against `models.json` with the source of the measurement in a
