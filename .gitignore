@@ -5,3 +5,12 @@ overrides.live.toml
 __pycache__/
 .superpowers/
 docs/superpowers/
+.claude/
+.codegraph/
+.codex/
+.gemini/
+.vscode/
+.mcp.json
+AGENTS.md
+GEMINI.md
+opencode.jsonc
