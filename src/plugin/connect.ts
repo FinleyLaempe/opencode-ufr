@@ -69,7 +69,7 @@ export async function registerConnect(d: ConnectDeps): Promise<ConnectRegistrati
             key: "login",
             title: "Uni login (optional)",
             type: "string",
-            placeholder: "fl240@uni-freiburg.de",
+            placeholder: "xx0000@uni-freiburg.de",
             description: "Only needed off campus — the built-in VPN uses it. Leave empty on the uni network.",
           },
           {

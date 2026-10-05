@@ -104,7 +104,7 @@ function fakeForti(o: {
 describe("authenticate", () => {
   test("success: returns the SVPNCOOKIE verbatim", async () => {
     const f = fakeForti({ cookie: "SVPNCOOKIE=abc%2Fdef+ghi; path=/; HttpOnly" })
-    const r = await authenticate({ gateway: f.url, user: "fl240@uni-freiburg.de", pass: "pw" })
+    const r = await authenticate({ gateway: f.url, user: "xx0000@uni-freiburg.de", pass: "pw" })
     expect(r.cookie).toBe("SVPNCOOKIE=abc%2Fdef+ghi")
     expect(r.realm).toBe("")
     expect(f.seen.map((s) => s.path)).toEqual(["/", "/remote/logincheck"])
@@ -137,7 +137,7 @@ describe("authenticate", () => {
     })
     const r = await authenticate({
       gateway: `http://127.0.0.1:${server.port}`,
-      user: "fl240@uni-freiburg.de",
+      user: "xx0000@uni-freiburg.de",
       pass: "pw",
       on2fa: async () => "123456",
     })

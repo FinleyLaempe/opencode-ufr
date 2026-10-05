@@ -231,10 +231,10 @@ describe("checkKey VPN classification (ruling R12)", () => {
 describe("ufr login — inspect and remove", () => {
   test("show reports an absent login; remove clears it", async () => {
     expect((await cli(["login", "show"])).code).toBe(1)
-    await cli(["connect", "--login", "fl240@uni-freiburg.de", "--password", "pw", "--keys", "key-a"])
+    await cli(["connect", "--login", "xx0000@uni-freiburg.de", "--password", "pw", "--keys", "key-a"])
     const shown = await cli(["login", "show"])
     expect(shown.code).toBe(0)
-    expect(shown.out).toContain("fl240@uni-freiburg.de")
+    expect(shown.out).toContain("xx0000@uni-freiburg.de")
     expect(shown.out).toContain("password stored")
     expect(shown.out).not.toContain("pw")
     expect((await cli(["login", "remove"])).code).toBe(0)

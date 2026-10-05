@@ -49,7 +49,7 @@ and fill in:
 | Field | Needed? |
 |---|---|
 | **API keys** | always — paste one key per UFR account, comma-separated (whitespace is filtered) |
-| **Uni login** | only off campus — e.g. `fl240@uni-freiburg.de`, empty on the uni network |
+| **Uni login** | only off campus — e.g. `xx0000@uni-freiburg.de`, empty on the uni network |
 | **Uni password** | only with a login above |
 
 Submitted credentials land in your OS keyring (never on disk), the gateway
@@ -59,7 +59,7 @@ restarts with them, and the `unifreiburg/…` models appear in the model picker.
 
 ```bash
 ufr connect --keys "<key1>,<key2>"                                 # keys only
-ufr connect --login fl240@uni-freiburg.de --password … --keys "…"   # + VPN login
+ufr connect --login xx0000@uni-freiburg.de --password … --keys "…"   # + VPN login
 ```
 
 `ufr connect` verifies every key against UFR, assigns aliases (`key1`, `key2`,

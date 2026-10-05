@@ -13,8 +13,8 @@ afterEach(async () => {
 
 describe("credentialToInput", () => {
   test("reads keys from the credential key and login/password from the configuration", () => {
-    expect(credentialToInput({ type: "key", key: "k1,k2, k3", configuration: { login: "fl240@uni-freiburg.de", password: "pw" } }))
-      .toEqual({ keys: "k1,k2, k3", login: "fl240@uni-freiburg.de", password: "pw" })
+    expect(credentialToInput({ type: "key", key: "k1,k2, k3", configuration: { login: "xx0000@uni-freiburg.de", password: "pw" } }))
+      .toEqual({ keys: "k1,k2, k3", login: "xx0000@uni-freiburg.de", password: "pw" })
   })
 
   test("falls back to a keys field in the configuration", () => {
@@ -72,11 +72,11 @@ describe("registerConnect (the /connect integration)", () => {
 
   test("a submitted credential is applied to keyring + config", async () => {
     env = await daemonEnv({ keys: {} })
-    const { ctx } = fakeCtx({ type: "key", key: "k1, k2", configuration: { login: "fl240@uni-freiburg.de", password: "pw" } })
+    const { ctx } = fakeCtx({ type: "key", key: "k1, k2", configuration: { login: "xx0000@uni-freiburg.de", password: "pw" } })
     await registerConnect({ ctx, paths: env.paths, secrets: env.secrets, log: () => {} })
     expect(await env.secrets.get("key1")).toBe("k1")
     expect(await env.secrets.get("key2")).toBe("k2")
-    expect(await env.secrets.get("vpn-login")).toBe("fl240@uni-freiburg.de")
+    expect(await env.secrets.get("vpn-login")).toBe("xx0000@uni-freiburg.de")
     expect(await env.secrets.get("vpn-pass")).toBe("pw")
     expect((await loadConfig(env.paths.configFile)).keys).toEqual(["key1", "key2"])
   })
@@ -139,7 +139,7 @@ function dynamicCtx(cred: () => unknown) {
 describe("watcher: connection removal and reconnect", () => {
   test("removing the connection in opencode wipes keys, the uni login and config", async () => {
     env = await daemonEnv({ keys: {} })
-    let cred: unknown = { type: "key", key: "k1,k2", configuration: { login: "fl240@uni-freiburg.de", password: "pw" } }
+    let cred: unknown = { type: "key", key: "k1,k2", configuration: { login: "xx0000@uni-freiburg.de", password: "pw" } }
     const { ctx, logs } = dynamicCtx(() => cred)
     const { stop, applyNow } = await registerConnect({ ctx, paths: env.paths, secrets: env.secrets, log: (m) => logs.push(m) })
     expect(await env.secrets.get("key1")).toBe("k1")
@@ -216,11 +216,11 @@ describe("applyConnect change detection", () => {
   test("re-applying the identical keys and login reports changed=false", async () => {
     env = await daemonEnv({ keys: {} })
     await env.secrets.set("key1", "k1")
-    await env.secrets.set("vpn-login", "fl240@uni-freiburg.de")
+    await env.secrets.set("vpn-login", "xx0000@uni-freiburg.de")
     await env.secrets.set("vpn-pass", "pw")
     await saveConfig(env.paths.configFile, mergeConfig({ keys: ["key1"] }))
     const r = await applyConnect(
-      { keys: "k1", login: "fl240@uni-freiburg.de", password: "pw" },
+      { keys: "k1", login: "xx0000@uni-freiburg.de", password: "pw" },
       { paths: env.paths, secrets: env.secrets },
     )
     expect(r.errors).toEqual([])

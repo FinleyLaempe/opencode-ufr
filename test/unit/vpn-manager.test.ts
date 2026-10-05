@@ -53,7 +53,7 @@ afterEach(() => {
 })
 
 const NO_CREDENTIALS = null
-const CREDS = { user: "fl240@uni-freiburg.de", pass: "pw" }
+const CREDS = { user: "xx0000@uni-freiburg.de", pass: "pw" }
 const LOG = () => {}
 
 describe("VpnManager", () => {

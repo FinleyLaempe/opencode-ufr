@@ -93,11 +93,11 @@ export async function cmdConnect(d: CliDeps, args: string[]): Promise<number> {
   let user = values.login
   let pass = values.password
   if (user === undefined && d.io.isTTY) {
-    user = (await io.prompt("Uni login for the built-in VPN, e.g. fl240@uni-freiburg.de (empty to skip): ")).trim()
+    user = (await io.prompt("Uni login for the built-in VPN, e.g. xx0000@uni-freiburg.de (empty to skip): ")).trim()
   }
   if (user) {
     if (!/^[^\s@]+@[^\s@]+$/.test(user)) {
-      io.err(`"${user}" does not look like a uni login (expected e.g. fl240@uni-freiburg.de)\n`)
+      io.err(`"${user}" does not look like a uni login (expected e.g. xx0000@uni-freiburg.de)\n`)
       return 2
     }
     if (pass === undefined) {

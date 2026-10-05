@@ -54,18 +54,18 @@ describe("ufr connect", () => {
   })
 
   test("non-interactive: login without --password is refused", async () => {
-    const r = await cli(["connect", "--login", "fl240@uni-freiburg.de", "--keys", "key-a"])
+    const r = await cli(["connect", "--login", "xx0000@uni-freiburg.de", "--keys", "key-a"])
     expect(r.code).toBe(2)
     expect(r.err).toContain("--password is required")
   })
 
   test("full non-interactive: login + password + keys in one call", async () => {
-    const r = await cli(["connect", "--login", "fl240@uni-freiburg.de", "--password", "pw", "--keys", "key-a"])
+    const r = await cli(["connect", "--login", "xx0000@uni-freiburg.de", "--password", "pw", "--keys", "key-a"])
     expect(r.code).toBe(0)
-    expect(await env!.secrets.get("vpn-login")).toBe("fl240@uni-freiburg.de")
+    expect(await env!.secrets.get("vpn-login")).toBe("xx0000@uni-freiburg.de")
     expect(await env!.secrets.get("vpn-pass")).toBe("pw")
     expect(await env!.secrets.get("key1")).toBe("key-a")
-    expect(r.out).toContain("login\tstored for fl240@uni-freiburg.de")
+    expect(r.out).toContain("login\tstored for xx0000@uni-freiburg.de")
     expect(r.out + r.err).not.toContain("pw")
   })
 
@@ -99,7 +99,7 @@ describe("ufr connect", () => {
 describe("disconnectAll (provider removal)", () => {
   test("wipes every stored key, the uni login and config.keys, and stops an idle gateway", async () => {
     env = await daemonEnv({ keys: { key1: "k1", "ufr-A": "ka" } })
-    await env.secrets.set("vpn-login", "fl240@uni-freiburg.de")
+    await env.secrets.set("vpn-login", "xx0000@uni-freiburg.de")
     await env.secrets.set("vpn-pass", "pw")
     await env.start() // a running gateway must be stopped by the wipe
     const logs: string[] = []
@@ -135,7 +135,7 @@ describe("disconnectAll (provider removal)", () => {
 describe("ufr disconnect", () => {
   test("wipes keys, the uni login and config.keys, and reports what went", async () => {
     env = await daemonEnv({ keys: { key1: "k1" } })
-    await env.secrets.set("vpn-login", "fl240@uni-freiburg.de")
+    await env.secrets.set("vpn-login", "xx0000@uni-freiburg.de")
     await env.secrets.set("vpn-pass", "pw")
     const t = testIo([])
     const code = await main(["disconnect"], {
