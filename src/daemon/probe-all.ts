@@ -52,14 +52,18 @@ export type ProbeAllDeps = {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
-/** Rungs for one model: known context → cheapest possible reject; unknown → coarse ladder. */
+/** Rungs for one model. Known context → just above it (cheapest reject, minimal
+ *  server tokenization). Unknown → one oversized rung: a rejection is free and
+ *  names the exact limit, and acceptance only happens for contexts above 1.5M,
+ *  which no UFR model has — so a ladder would only ever spend money on accepted
+ *  rungs without adding information. */
 export function sizesFor(known: number | null): number[] {
   if (known !== null) {
     const out = [known + 64]
     for (let s = 2 * known + 64; s <= PROBE_CEILING && out.length < 3; s *= 2) out.push(s)
     return out
   }
-  return [200_000, 600_000, 1_500_000]
+  return [1_500_000]
 }
 
 async function probeOne(o: ProbeAllDeps, id: string, known: number | null): Promise<ProbeRow> {

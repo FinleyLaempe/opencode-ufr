@@ -77,12 +77,13 @@ describe("probeAllContexts", () => {
     expect(calls.filter((c) => c.model === "grown-llmlb").length).toBe(3) // escalated twice before the reject
   })
 
-  test("unknown models use the coarse ladder and name the limit", async () => {
-    const { fetch } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 131_072, "unknown-llmlb": 262_144 })
+  test("unknown models use one oversized rung and name the limit", async () => {
+    const { fetch, calls } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 131_072, "unknown-llmlb": 262_144 })
     const rows = await probeAllContexts(deps(fetch))
     const unknown = rows.find((r) => r.id === "unknown-llmlb")!
     expect(unknown.how).toBe("error-named")
     expect(unknown.probed).toBe(262_144)
+    expect(calls.filter((c) => c.model === "unknown-llmlb")).toHaveLength(1) // rejected = free, no ladder needed
   })
 
   test("paid models are skipped unless included; excluded models skipped always", async () => {
@@ -163,7 +164,7 @@ describe("sizesFor", () => {
     expect(sizesFor(1_048_576)).toEqual([1_048_640]) // next doubling exceeds the ceiling
     expect(sizesFor(8_000)).toEqual([8_064, 16_064, 32_128])
   })
-  test("unknown context uses the coarse ladder", () => {
-    expect(sizesFor(null)).toEqual([200_000, 600_000, 1_500_000])
+  test("unknown context uses a single oversized rung", () => {
+    expect(sizesFor(null)).toEqual([1_500_000])
   })
 })
