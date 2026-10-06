@@ -7,7 +7,7 @@
   "main": "./src/plugin/index.ts",
   "exports": {
     ".": "./src/plugin/index.ts",
-    "./tui": "./src/plugin/tui.tsx"
+    "./tui": "./dist/tui.js"
   },
   "dependencies": {
     "@opencode/plugin": "^2.0.23"
@@ -19,6 +19,7 @@
   },
   "files": [
     "src",
+    "dist",
     "skills",
     "models.json",
     "README.md",
@@ -38,14 +39,18 @@
     "open-webui"
   ],
   "scripts": {
+    "build:tui": "bun scripts/build-tui.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun run typecheck && bun test"
+    "prepublishOnly": "bun run build:tui && bun run typecheck && bun test"
   },
   "devDependencies": {
+    "@babel/core": "7.28.0",
+    "@babel/preset-typescript": "7.27.1",
     "@opentui/core": "^0.5.14",
     "@opentui/solid": "^0.5.14",
     "@types/bun": "^1.3.0",
+    "babel-preset-solid": "1.9.12",
     "solid-js": "^1.9.15",
     "typescript": "^5.9.0"
   }
