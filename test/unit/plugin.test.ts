@@ -195,7 +195,7 @@ describe("plugin setup", () => {
     expect(skills[0]).toMatchObject({ id: "ufr-pdf2md", name: "PDF to Markdown" })
     expect(skills[0].description.length).toBeGreaterThan(20)
     expect(skills[0].content).toContain("bun ")
-    expect(skills[0].content).toContain("src/client/pdf2md.ts")
+    expect(skills[0].content.replaceAll("\\", "/")).toContain("src/client/pdf2md.ts") // windows backslashes
     expect(skills[0].content).not.toContain("{{PDF2MD_SCRIPT}}") // placeholder resolved
     if (typeof cleanup === "function") cleanup()
   })
