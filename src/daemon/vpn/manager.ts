@@ -10,13 +10,11 @@ import { TcpStack } from "./stack"
 import { startProxy, type ProxyHandle } from "./proxy"
 import {
   authenticate,
-  fetchTunnelConfig,
   openTunnel,
   VpnChallengeError,
   type TunnelHandle,
 } from "./fortinet"
 import type { Transport } from "../transport"
-import { isVpnPage } from "../../shared/vpn"
 
 export type VpnState = {
   mode: "off" | "connecting" | "up" | "failed"
@@ -78,8 +76,12 @@ export class VpnManager {
       name: "vpn",
       fetch: async (url, init) => {
         const path = await untilAborted(this.ensurePath(), init?.signal)
-        if (path === "vpn" && this.proxy) {
-          return await fetch(url, { ...init, proxy: `http://127.0.0.1:${this.proxy.port}` } as RequestInit)
+        if (path === "vpn") {
+          const proxy = this.proxy
+          // ensurePath answered "vpn" but teardown nulled the proxy meanwhile:
+          // fail fast instead of silently falling through to a direct fetch
+          if (!proxy) throw new Error("the vpn tunnel went down while the request was starting — retry")
+          return await fetch(url, { ...init, proxy: `http://127.0.0.1:${proxy.port}` } as RequestInit)
         }
         return await f(url, init)
       },
@@ -115,7 +117,7 @@ export class VpnManager {
     }
     // 2. tunnel needed — do we have a login?
     if (!this.o.credentials) {
-      this.setState("failed", "off campus and no uni login stored — run `ufr login add <user>`")
+      this.setState("failed", "off campus and no uni login stored — add the uni login in opencode's /connect (Uni Freiburg)")
       return "failed"
     }
     // 3. bring the tunnel up
@@ -123,6 +125,7 @@ export class VpnManager {
       await this.open()
       return "vpn"
     } catch (e) {
+      if (this.stopped) return "failed" // shutting down: don't overwrite the stopped state
       const msg = (e as Error).message
       this.setState("failed", msg)
       this.scheduleReconnect(msg)
@@ -144,11 +147,7 @@ export class VpnManager {
         this.directOk = true
         return "direct"
       }
-      if (type.includes("text/html")) {
-        const html = await res.text().catch(() => "")
-        this.directOk = false
-        return isVpnPage(html) ? "tunnel-needed" : "tunnel-needed"
-      }
+      // HTML or anything unexpected: the tunnel is the only path left
       this.directOk = false
       return "tunnel-needed"
     } catch {
@@ -172,7 +171,8 @@ export class VpnManager {
     }).catch((e) => {
       throw signal.aborted ? new Error(`the uni VPN gateway did not answer within ${Math.ceil(loginMs / 1000)} s`) : e
     })
-    if (this.remoteIp === null) this.remoteIp = await resolveIp(this.o.upstreamHost)
+    // fresh per attempt: the DNS answer can change with the route
+    this.remoteIp = await resolveIp(this.o.upstreamHost)
 
     this.setState("connecting", "negotiating PPP")
     let sendIp: (datagram: Uint8Array) => void = () => {}
@@ -185,13 +185,23 @@ export class VpnManager {
         sendIp = (datagram) => ppp.sendIp(datagram)
       },
       onEstablished: (cfg) => {
+        if (this.stopped) return // stop() mid-connect: the tunnel is closed below; don't start the proxy
+        // parseTunnelConfig validates innerIp; this is a non-throwing assertion so a
+        // malformed value can never surface as a "tunnel framing error"
+        let local: Ipv4
+        try {
+          local = ipv4Parse(cfg.innerIp)
+        } catch {
+          this.o.log(`tunnel established with an invalid inner ip ("${cfg.innerIp}") — ignored`)
+          return
+        }
         if (!stackRef) {
-          stackRef = new TcpStack({ local: ipv4Parse(cfg.innerIp), sink: (pkt) => sendIp(pkt), opts: { mss: Math.min(cfg.mru - 40, 1360) } }, this.o.log)
+          stackRef = new TcpStack({ local, sink: (pkt) => sendIp(pkt), opts: { mss: Math.min(cfg.mru - 40, 1360) } }, this.o.log)
           this.stack = stackRef
           this.proxy = startProxy({ stack: stackRef, remoteIp: this.remoteIp!, log: this.o.log })
           this.o.log(`proxy listening on 127.0.0.1:${this.proxy.port}`)
         } else {
-          stackRef.setLocal(ipv4Parse(cfg.innerIp))
+          stackRef.setLocal(local)
         }
         this.reconnectAttempt = 0
         this.setState("up", `tunnel up (inner ip ${cfg.innerIp})`, cfg.innerIp, this.proxy?.port)
@@ -204,11 +214,21 @@ export class VpnManager {
       },
       onIp: (datagram) => stackRef?.receive(datagram),
     })
+    if (this.stopped) {
+      // stop() ran while the connect was in flight: the tunnel came up after the
+      // teardown — close it instead of leaking a live session
+      await tunnel.close()
+      throw new Error("stopped")
+    }
     this.tunnel = tunnel
 
     // wait for the XML phase + PPP/ICCP negotiation to finish
     const deadline = Date.now() + ESTABLISH_TIMEOUT_MS
     while (this.state.mode !== "up") {
+      if (this.stopped) {
+        await tunnel.close()
+        throw new Error("stopped")
+      }
       if (Date.now() > deadline) {
         await tunnel.close()
         throw new Error("the tunnel did not come up within 30 s")
@@ -271,8 +291,22 @@ function untilAborted<T>(p: Promise<T>, signal?: AbortSignal | null): Promise<T>
   })
 }
 
-async function resolveIp(host: string): Promise<Ipv4> {
+const RESOLVE_TIMEOUT_MS = 10_000
+
+/** Resolve the upstream host to an IPv4, with a deadline (a hung resolver must not stall the connect forever). */
+async function resolveIp(host: string, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<Ipv4> {
   const { lookup } = await import("node:dns/promises")
-  const res = await lookup(host, { family: 4 })
-  return ipv4Parse(res.address)
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    const res = await Promise.race([
+      lookup(host, { family: 4 }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`DNS lookup for ${host} did not answer within ${Math.ceil(timeoutMs / 1000)} s`)), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+    return ipv4Parse(res.address)
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }

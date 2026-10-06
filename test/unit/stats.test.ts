@@ -35,9 +35,10 @@ describe("Stats", () => {
   test("pool admissions since a time exclude locally rejected requests", () => {
     const s = new Stats(":memory:")
     s.record(row({ ts: 100 }))
+    s.record(row({ ts: 150 })) // boundary: "since" is inclusive, like spendByKeySince
     s.record(row({ ts: 200, poolAdmitted: false }))
     s.record(row({ ts: 300 }))
-    expect(s.poolAdmissionsSince(150)).toEqual([300])
+    expect(s.poolAdmissionsSince(150)).toEqual([150, 300])
   })
 
   test("spend per key since a time", () => {

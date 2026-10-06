@@ -40,6 +40,15 @@ export async function loadUfrModels(o: {
         redirect: "manual",
       })
       const type = res.headers.get("content-type") ?? ""
+      // The 3xx check must come first: real redirects carry text/html, so the HTML
+      // branch below would otherwise swallow them (and could even misfire isVpnPage
+      // on a redirect page). Same ordering as callUpstream.
+      if (res.status >= 300 && res.status < 400) {
+        // Not proof of the VPN wall — cancel the body (like callUpstream does) so
+        // the connection is not left hanging on a redirect we will not follow.
+        await res.body?.cancel()
+        throw new Error(`UFR answered with a redirect (HTTP ${res.status}) instead of JSON`)
+      }
       if (type.includes("text/html")) {
         const html = await res.text()
         throw new Error(isVpnPage(html) ? VPN_MESSAGE : `HTML instead of JSON (HTTP ${res.status})`)

@@ -35,6 +35,13 @@ export class FakeUfr {
   errorModels = new Map<string, number>()
   delayMs = 0
   streamChunkDelayMs = 0
+  /**
+   * When > 0, an SSE stream delivers that many bytes and then dies mid-generation.
+   * Bun's HTTP layer swallows serve-side ReadableStream errors (the client sees a
+   * clean EOF), so the death is an abrupt connection teardown — what a dropped
+   * UFR connection looks like on the wire.
+   */
+  failStreamAfterBytes = 0
   vpnPage = false
   private readonly admissions = new Map<string, number[]>()
   private server!: ReturnType<typeof Bun.serve>
@@ -72,7 +79,13 @@ export class FakeUfr {
     if (req.method === "GET" && url.pathname === "/api/models") return Response.json({ data: this.o.models })
     if (req.method !== "POST" || url.pathname !== "/api/chat/completions") return new Response("not found", { status: 404 })
 
-    const body = (await req.json()) as Record<string, any>
+    let body: Record<string, any>
+    try {
+      body = (await req.json()) as Record<string, any>
+    } catch {
+      // malformed JSON: answer like upstream's error shape instead of crashing Bun.serve
+      return Response.json({ error: { message: "Invalid JSON body", code: 400 } }, { status: 400 })
+    }
     const priorCallsToModel = this.calls.filter((c) => c.model === String(body.model)).length
     const call: FakeCall = { key, model: String(body.model), stream: body.stream === true, body, at: Date.now(), aborted: false }
     this.calls.push(call)
@@ -124,9 +137,21 @@ export class FakeUfr {
     const chunk = (o: unknown) => enc.encode(`data: ${JSON.stringify(o)}\n\n`)
     const includeUsage = body.stream_options?.include_usage === true
     const delay = this.streamChunkDelayMs
+    const failAfter = this.failStreamAfterBytes
+    const server = this.server
     const base = { id: "chatcmpl-fake", object: "chat.completion.chunk", model: call.model }
     const stream = new ReadableStream<Uint8Array>({
       async start(ctl) {
+        if (failAfter > 0) {
+          // Some bytes, then the connection is torn down mid-generation. The bytes
+          // are flushed before the teardown so the client sees them first.
+          const first = chunk({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" } }] })
+          ctl.enqueue(first.length >= failAfter ? first.subarray(0, failAfter) : first)
+          if (first.length < failAfter) ctl.enqueue(enc.encode("x".repeat(failAfter - first.length)))
+          await Bun.sleep(50)
+          server.stop(true)
+          return
+        }
         ctl.enqueue(chunk({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" } }] }))
         for (const piece of ["Hel", "lo"]) {
           if (delay) await Bun.sleep(delay)

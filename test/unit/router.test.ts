@@ -203,8 +203,10 @@ describe("Router, non-streaming", () => {
     const e = setup()
     e.ufr.delayMs = 300
     const ac = new AbortController()
-    setTimeout(() => ac.abort(), 50)
-    const res = await e.chat({ model: GLM }, ac.signal)
+    const pending = e.chat({ model: GLM }, ac.signal)
+    while (e.ufr.calls.length === 0) await Bun.sleep(1) // the upstream call is in flight
+    ac.abort()
+    const res = await pending
     expect(res.status).toBe(499)
     expect(e.stats.summary(0).byModel[0]!.errors).toBe(1)
   })
@@ -216,8 +218,10 @@ describe("Router, non-streaming", () => {
     expect(e.breakers.get(GLM).state()).toBe("half_open")
     e.ufr.delayMs = 300
     const ac = new AbortController()
-    setTimeout(() => ac.abort(), 50)
-    const res = await e.chat({ model: GLM }, ac.signal)
+    const pending = e.chat({ model: GLM }, ac.signal)
+    while (e.ufr.calls.length === 0) await Bun.sleep(1) // the upstream call is in flight
+    ac.abort()
+    const res = await pending
     expect(res.status).toBe(499)
     expect(e.ufr.calls).toHaveLength(1)
     expect(e.breakers.get(GLM).state()).toBe("half_open")

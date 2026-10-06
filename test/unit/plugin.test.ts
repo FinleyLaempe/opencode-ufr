@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { UFR_INTEGRATION_ID } from "../../src/plugin/connect"
 import { ensureDaemon, isNewer } from "../../src/plugin/ensure-daemon"
-import { heartbeat, default as plugin } from "../../src/plugin/index"
+import { heartbeat, default as plugin, setupPlugin } from "../../src/plugin/index"
+import { loadConfig } from "../../src/shared/config"
 import { VERSION } from "../../src/shared/version"
 import { daemonEnv } from "../support/daemon-env"
 
@@ -52,14 +53,105 @@ describe("ensureDaemon", () => {
     expect(conn.port).not.toBe(old.port)
     expect((await fetch(`http://127.0.0.1:${old.port}/health`).catch(() => null))?.ok ?? false).toBe(false)
   })
+
+  test("a spawn failure fails fast instead of waiting out the timeout", async () => {
+    env = await daemonEnv()
+    const t0 = Date.now()
+    await expect(
+      ensureDaemon({ paths: env.paths, version: VERSION, spawn: (onError) => onError(new Error("spawn ENOENT")), timeoutMs: 30_000 }),
+    ).rejects.toThrow(/failed to start/)
+    expect(Date.now() - t0).toBeLessThan(5_000)
+  })
+
+  test("a /health answer without a version is not trusted as our daemon", async () => {
+    env = await daemonEnv()
+    const srv = Bun.serve({ port: 0, fetch: () => Response.json({ ok: true, pid: process.pid }) })
+    await Bun.write(env.paths.daemonFile, JSON.stringify({ port: srv.port, pid: process.pid, version: VERSION }))
+    await Bun.write(env.paths.tokenFile, "tok\n")
+    let spawned = 0
+    await expect(
+      ensureDaemon({ paths: env.paths, version: VERSION, spawn: () => spawned++, timeoutMs: 500 }),
+    ).rejects.toThrow(/did not start/)
+    expect(spawned).toBe(1)
+    srv.stop(true)
+  })
+
+  test("a daemon that rejects the stored token fails with the reason instead of returning a 401 conn", async () => {
+    env = await daemonEnv()
+    const srv = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        if (new URL(req.url).pathname === "/health") return Response.json({ ok: true, version: "0.1.0" })
+        return new Response("unauthorized", { status: 401 }) // _status never verifiable
+      },
+    })
+    await Bun.write(env.paths.daemonFile, JSON.stringify({ port: srv.port, pid: process.pid, version: "0.1.0" }))
+    await Bun.write(env.paths.tokenFile, "tok\n")
+    await expect(
+      ensureDaemon({ paths: env.paths, version: "999.0.0", spawn: () => {}, timeoutMs: 400 }),
+    ).rejects.toThrow(/rejects the stored token/)
+    srv.stop(true)
+  })
+
+  test("a transient non-ok _status is not a token rejection — the running daemon keeps serving", async () => {
+    env = await daemonEnv()
+    const srv = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        if (new URL(req.url).pathname === "/health") return Response.json({ ok: true, version: "0.1.0" })
+        return new Response("unavailable", { status: 503 }) // e.g. mid-restart
+      },
+    })
+    await Bun.write(env.paths.daemonFile, JSON.stringify({ port: srv.port, pid: process.pid, version: "0.1.0" }))
+    await Bun.write(env.paths.tokenFile, "tok\n")
+    let spawned = 0
+    const conn = await ensureDaemon({
+      paths: env.paths,
+      version: "999.0.0",
+      spawn: () => spawned++, // harmless: the lock keeps the redundant child out
+      timeoutMs: 2_000,
+    })
+    expect(spawned).toBe(1)
+    expect(conn).toEqual({ port: srv.port as number, token: "tok" })
+    srv.stop(true)
+  })
+
+  test("an upgrade is deferred while the daemon answers a request", async () => {
+    env = await daemonEnv()
+    const srv = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        if (new URL(req.url).pathname === "/health") return Response.json({ ok: true, version: "0.1.0" })
+        return Response.json({ inFlight: 2 })
+      },
+    })
+    await Bun.write(env.paths.daemonFile, JSON.stringify({ port: srv.port, pid: process.pid, version: "0.1.0" }))
+    await Bun.write(env.paths.tokenFile, "tok\n")
+    const conn = await ensureDaemon({
+      paths: env.paths,
+      version: "999.0.0",
+      spawn: () => {
+        throw new Error("must not spawn while a request is in flight")
+      },
+      timeoutMs: 1_000,
+    })
+    expect(conn).toEqual({ port: srv.port as number, token: "tok" })
+    srv.stop(true)
+  })
 })
 
 describe("plugin setup", () => {
   const fakeCtx = (options: Record<string, unknown> = {}) => {
     const added: any[] = []
+    const skills: any[] = []
     return {
       added,
-      ctx: { options, provider: { transform: async (fn: (editor: any) => void) => fn({ add: (x: any) => added.push(x) }) } },
+      skills,
+      ctx: {
+        options,
+        provider: { transform: async (fn: (editor: any) => void) => fn({ add: (x: any) => added.push(x) }) },
+        skill: { transform: async (fn: (editor: any) => void) => fn({ add: (x: any) => skills.push(x) }) },
+      },
     }
   }
 
@@ -92,6 +184,35 @@ describe("plugin setup", () => {
     await plugin.setup(ctx)
     expect(added).toHaveLength(0)
   })
+
+  test("registers the pdf2md skill with the script path baked in", async () => {
+    env = await daemonEnv()
+    await env.start()
+    process.env.OPENCODE_UFR_HOME = env.home
+    const { ctx, skills } = fakeCtx()
+    const cleanup = await plugin.setup(ctx)
+    expect(skills).toHaveLength(1)
+    expect(skills[0]).toMatchObject({ id: "ufr-pdf2md", name: "PDF to Markdown" })
+    expect(skills[0].description.length).toBeGreaterThan(20)
+    expect(skills[0].content).toContain("bun ")
+    expect(skills[0].content).toContain("src/client/pdf2md.ts")
+    expect(skills[0].content).not.toContain("{{PDF2MD_SCRIPT}}") // placeholder resolved
+    if (typeof cleanup === "function") cleanup()
+  })
+
+  test("setup survives an opencode without the skill API", async () => {
+    env = await daemonEnv()
+    await env.start()
+    process.env.OPENCODE_UFR_HOME = env.home
+    const added: any[] = []
+    const ctx = {
+      options: { providerId: "ufr-test" },
+      provider: { transform: async (fn: (editor: any) => void) => fn({ add: (x: any) => added.push(x) }) },
+    }
+    const cleanup = await plugin.setup(ctx)
+    expect(added).toHaveLength(1) // provider still registers
+    if (typeof cleanup === "function") cleanup()
+  })
 })
 
 describe("plugin setup: connection gating", () => {
@@ -111,6 +232,48 @@ describe("plugin setup: connection gating", () => {
     if (typeof cleanup === "function") cleanup()
     expect(added).toHaveLength(0)
     expect(await Bun.file(env.paths.daemonFile).exists()).toBe(false)
+  })
+
+  test("a removal while opencode was closed is wiped on the next start", async () => {
+    env = await daemonEnv({ keys: { key1: "k1" } })
+    await env.secrets.set("vpn-login", "xx0000@uni-freiburg.de")
+    await env.secrets.set("vpn-pass", "pw")
+    process.env.OPENCODE_UFR_HOME = env.home
+    const added: any[] = []
+    const ctx = {
+      options: { providerId: "ufr-test" },
+      provider: { transform: async (fn: (editor: any) => void) => fn({ add: (x: any) => added.push(x) }) },
+      integration: {
+        transform: async () => {},
+        connection: { active: async () => undefined }, // removed while opencode was closed
+      },
+    }
+    const cleanup = await setupPlugin(ctx, { secrets: env.secrets })
+    if (typeof cleanup === "function") cleanup()
+    expect(added).toHaveLength(0)
+    expect(await env.secrets.get("key1")).toBeNull()
+    expect(await env.secrets.get("vpn-login")).toBeNull()
+    expect(await env.secrets.get("vpn-pass")).toBeNull()
+    expect((await loadConfig(env.paths.configFile)).keys).toEqual([])
+  })
+
+  test("a broken config does not brick the plugin load (cleanup failure is caught)", async () => {
+    env = await daemonEnv({ keys: {} })
+    await Bun.write(env.paths.configFile, '{ "keyRpm": 5 }') // unknown key → loadConfig throws
+    process.env.OPENCODE_UFR_HOME = env.home
+    const added: any[] = []
+    const ctx = {
+      options: { providerId: "ufr-test" },
+      provider: { transform: async (fn: (editor: any) => void) => fn({ add: (x: any) => added.push(x) }) },
+      integration: {
+        transform: async () => {},
+        connection: { active: async () => undefined },
+      },
+    }
+    const cleanup = await setupPlugin(ctx, { secrets: env.secrets }) // must not reject
+    if (typeof cleanup === "function") cleanup()
+    expect(added).toHaveLength(0)
+    expect(await env.secrets.get("key1")).toBeNull()
   })
 
   test("heartbeat leaves the daemon down when the connection is gone", async () => {

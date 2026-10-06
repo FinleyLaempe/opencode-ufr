@@ -12,15 +12,11 @@ export const VPN_PASS = "vpn-pass"
 
 export class SecretStoreError extends Error {}
 
-type Backend = {
-  get(o: { service: string; name: string }): Promise<string | null>
-  set(o: { service: string; name: string; value: string }): Promise<void>
-  delete(o: { service: string; name: string }): Promise<boolean>
-}
+type Backend = Pick<typeof Bun.secrets, "get" | "set" | "delete">
 
 /** UFR keys in the OS keyring: macOS Keychain, Windows Credential Manager, libsecret on Linux. */
 export class KeyringStore implements SecretStore {
-  constructor(private readonly backend: Backend = Bun.secrets as unknown as Backend) {}
+  constructor(private readonly backend: Backend = Bun.secrets) {}
 
   private async run<T>(what: string, fn: () => Promise<T>): Promise<T> {
     try {

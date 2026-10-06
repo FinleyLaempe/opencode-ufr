@@ -40,7 +40,8 @@ jobs:
         with:
           bun-version: "1.3.x"
       - name: probe all models (through the built-in VPN)
-        run: bun scripts/probe-all-contexts.ts --key-env UFR_PROBE_KEY --vpn --write
+        # --direct: a CI runner has no local gateway — call UFR via the tunnel and pace itself.
+        run: bun scripts/probe-all-contexts.ts --direct --vpn --write
         env:
           UFR_PROBE_KEY: ${{ secrets.UFR_PROBE_KEY }}
           UFR_VPN_LOGIN: ${{ secrets.UFR_VPN_LOGIN }}

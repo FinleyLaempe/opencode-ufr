@@ -15,6 +15,10 @@ ver="${1:-}"
 branch="$(git rev-parse --abbrev-ref HEAD)"
 [[ "$branch" == "main" ]] || { echo "run this on main (now on $branch)" >&2; exit 1; }
 [[ -z "$(git status --porcelain)" ]] || { echo "working tree is dirty — commit or stash first" >&2; exit 1; }
+if git rev-parse -q --verify "refs/tags/v$ver" >/dev/null; then
+  echo "tag v$ver already exists — bump the version or delete the tag first" >&2
+  exit 1
+fi
 
 bun -e "const f='package.json'; const j=JSON.parse(await Bun.file(f).text()); j.version='$ver'; await Bun.write(f, JSON.stringify(j, null, 2) + '\n')"
 

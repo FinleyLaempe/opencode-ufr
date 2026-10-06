@@ -26,6 +26,7 @@ import collections
 import concurrent.futures
 import datetime
 import json
+import os
 import sys
 import tempfile
 import time
@@ -94,7 +95,7 @@ def ufr_models(key: str):
         raw = json.loads(payload)
     except json.JSONDecodeError:
         raise SystemExit(
-            "/api/models liefert kein JSON (VPN-Seite?) — erst Netzweg prüfen (`ufr status`)"
+            "/api/models liefert kein JSON (VPN-Seite?) — erst Netzweg prüfen"
         )
     items = raw if isinstance(raw, list) else (raw or {}).get("data", [])
     return {
@@ -156,8 +157,7 @@ def main() -> None:
     key = (
         sys.stdin.read().strip()
         if args.key_stdin
-        else (args.key or "").strip()
-        or __import__("os").environ.get(args.key_env, "").strip()
+        else (args.key or "").strip() or os.environ.get(args.key_env, "").strip()
     )
     if not key:
         raise SystemExit("kein Key — --key, --key-env oder --key-stdin nutzen")
@@ -175,9 +175,17 @@ def main() -> None:
     # -- Vorlauf: Modell prüfen, Context aus models.json ----------------------
     print(f"== Vorlauf — Modell {args.model} bei UFR prüfen", flush=True)
     models = ufr_models(key)
-    if args.model not in models and args.model not in json.loads(
-        MODELS_JSON.read_text()
-    ).get("aliases", {}):
+    try:
+        aliases = json.loads(MODELS_JSON.read_text()).get("aliases", {})
+    except (OSError, json.JSONDecodeError):
+        aliases = {}
+    resolved = aliases.get(args.model, args.model)
+    if args.model in aliases and resolved not in models:
+        raise SystemExit(
+            f"Alias '{args.model}' zeigt auf '{resolved}', das nicht in UFRs "
+            f"Modellliste steht — models.json und UFR stimmen nicht überein"
+        )
+    if resolved not in models:
         close = [m for m in models if args.model.split("-")[0] in m]
         raise SystemExit(
             f"Modell '{args.model}' nicht in UFRs Modellliste. Ähnliche: {close[:6]}"
@@ -300,11 +308,9 @@ def main() -> None:
         time.sleep(max(0.0, pace - (time.time() - done)))
 
     # -- Bericht ---------------------------------------------------------------
-    run_min = rolling_max(admits)
     phase3_s = time.time() - phase3_start
     phase3_rate = len(phase3_admits) / phase3_s * 3600 if phase3_s > 5 else 0.0
 
-    next_minute = (int(admits[0]) // 60 + 1) * 60 if admits else 0
     print("\n" + "=" * 64)
     print(f"BERICHT  {model}  (Run {run_id})")
     print("=" * 64)
@@ -317,7 +323,11 @@ def main() -> None:
             f"                     (dichtestes 60s-Fenster {utc(w_start)}–{utc(w_end)} UTC)"
         )
         if recovery:
-            delta_slide = recovery - admits[0]
+            # Sliding window: frees 60 s after the last admission before the
+            # 429. Fixed window: frees at the minute boundary after the 429.
+            last_before = max((t for t in admits if t < first429), default=first429)
+            delta_slide = recovery - (last_before + 60)
+            next_minute = (int(first429) // 60 + 1) * 60
             delta_fixed = recovery - next_minute
             wtype = (
                 "sliding 60s"
@@ -326,7 +336,7 @@ def main() -> None:
             )
             print(f"  Fenstertyp         {wtype}")
             print(
-                f"                     Erholung {utc(recovery)} UTC — sliding +{delta_slide:.0f}s, fixed +{delta_fixed:.0f}s nach Minute"
+                f"                     Erholung {utc(recovery)} UTC — sliding {delta_slide:+.0f}s nach letzter Zulassung + 60 s, fixed {delta_fixed:+.0f}s nach der Minute"
             )
         else:
             print(
@@ -366,7 +376,10 @@ def main() -> None:
         f"  Hinweis            UFR maurt Modellgruppen oberhalb ~900/h Dauerlast für Stunden ein;"
     )
     print(
-        f"                     der Gateway deckelt den Pool deshalb bei 800/h — unabhängig von der Key-Anzahl."
+        f"                     der Gateway deckelt den Pool standardmäßig nicht (limits.poolPerHour: 0 = Limiter aus);"
+    )
+    print(
+        f"                     setze ihn z. B. auf 800/h, um das unabhängig von der Key-Anzahl abzufedern."
     )
     print("=" * 64)
 

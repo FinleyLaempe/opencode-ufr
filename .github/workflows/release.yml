@@ -4,9 +4,9 @@ name: release
 # workflow verifies, publishes to npm (after manual approval) and creates
 # the GitHub release with notes and the packed tarball.
 #
-# One-time repo setup (see README/CLAUDE.md):
-#   - Settings → Environments → create "npm" with a required reviewer
-#   - Settings → Secrets → Actions → NPM_TOKEN (npm automation token)
+# One-time setup happens on npm's side, not in this repo: the package's
+# trusted-publisher config on npmjs.com (repo + workflow filename +
+# environment "npm") — no NPM_TOKEN secret is needed.
 
 on:
   push:

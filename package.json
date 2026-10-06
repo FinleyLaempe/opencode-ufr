@@ -1,20 +1,25 @@
 {
   "name": "opencode-ufr",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Uni Freiburg (UFR) Open WebUI models in opencode — local gateway with key pool, UFR-aware rate limiting, circuit breaker and fallbacks",
   "license": "MIT",
   "type": "module",
   "main": "./src/plugin/index.ts",
   "exports": {
-    ".": "./src/plugin/index.ts"
+    ".": "./src/plugin/index.ts",
+    "./tui": "./src/plugin/tui.tsx"
   },
-  "bin": {
-    "ufr": "bin/ufr.ts",
-    "opencode-ufr": "bin/ufr.ts"
+  "dependencies": {
+    "@opencode/plugin": "^2.0.23"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.8",
+    "@opentui/solid": ">=0.5.8",
+    "solid-js": ">=1.9.0"
   },
   "files": [
-    "bin",
     "src",
+    "skills",
     "models.json",
     "README.md",
     "LICENSE"
@@ -38,7 +43,10 @@
     "prepublishOnly": "bun run typecheck && bun test"
   },
   "devDependencies": {
+    "@opentui/core": "^0.5.14",
+    "@opentui/solid": "^0.5.14",
     "@types/bun": "^1.3.0",
+    "solid-js": "^1.9.15",
     "typescript": "^5.9.0"
   }
 }

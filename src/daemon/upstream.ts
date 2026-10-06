@@ -21,8 +21,17 @@ export async function callUpstream(o: {
   signal?: AbortSignal
   stream: boolean
 }): Promise<UpstreamResult> {
-  const timeout = AbortSignal.timeout(o.timeoutMs)
-  const signal = o.signal ? AbortSignal.any([o.signal, timeout]) : timeout
+  // The timeout guards time-to-first-byte: it aborts only until UFR answers
+  // with response headers, then is cleared so a long SSE body can stream well
+  // past it — a stream longer than requestTimeoutS must not be killed
+  // mid-generation (the client's own signal still aborts via the composed
+  // signal). Non-streaming calls keep the whole-request guarantee in practice:
+  // UFR sends its JSON body immediately after the headers, so a slow generation
+  // stalls the headers too; a body stalling after that is the caller's signal's
+  // job (it composes into the same signal).
+  const ttfb = new AbortController()
+  const signal = o.signal ? AbortSignal.any([o.signal, ttfb.signal]) : ttfb.signal
+  const timer = setTimeout(() => ttfb.abort(), o.timeoutMs)
   let res: Response
   try {
     res = await o.transport.fetch(`${o.baseUrl}/chat/completions`, {
@@ -37,8 +46,9 @@ export async function callUpstream(o: {
       redirect: "manual",
     })
   } catch (e) {
+    clearTimeout(timer)
     if (o.signal?.aborted) throw e
-    if (timeout.aborted) {
+    if (ttfb.signal.aborted) {
       const message = `UFR did not answer within ${Math.round(o.timeoutMs / 1000)} s`
       return {
         kind: "error",
@@ -49,6 +59,7 @@ export async function callUpstream(o: {
     }
     return { kind: "unreachable", message: `cannot reach UFR (${(e as Error).message}) — are you connected to the uni VPN?` }
   }
+  clearTimeout(timer) // headers are in — the body may now stream indefinitely
   const type = res.headers.get("content-type") ?? ""
   if (res.status >= 300 && res.status < 400) {
     // Not proof of the VPN wall (ruling R12): only UFR's HTML page below is.

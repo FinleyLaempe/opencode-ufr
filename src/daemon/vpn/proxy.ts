@@ -57,7 +57,9 @@ export function startProxy(o: {
           return
         }
         const port = Number(m[2])
-        if (!allowedPorts.includes(port) || !m[1]!.toLowerCase().endsWith(suffix)) {
+        const host = m[1]!.toLowerCase()
+        // exact match or a subdomain — a bare endsWith would let evil-uni-freiburg.de through
+        if (!allowedPorts.includes(port) || (host !== suffix && !host.endsWith(`.${suffix}`))) {
           // the tunnel only carries traffic to the uni host
           log(`proxy: refusing CONNECT ${m[1]}:${port}`)
           socket.write("HTTP/1.1 403 Forbidden\r\n\r\n")

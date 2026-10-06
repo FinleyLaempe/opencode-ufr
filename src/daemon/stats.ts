@@ -60,7 +60,8 @@ export class Stats {
 
   /** Admission times for rebuilding the pool window after a restart. */
   poolAdmissionsSince(sinceTs: number): number[] {
-    const rows = this.db.query("SELECT ts FROM requests WHERE pool_admitted = 1 AND ts > ? ORDER BY ts").all(sinceTs) as { ts: number }[]
+    // ts >= like spendByKeySince/summary — "since" is inclusive everywhere
+    const rows = this.db.query("SELECT ts FROM requests WHERE pool_admitted = 1 AND ts >= ? ORDER BY ts").all(sinceTs) as { ts: number }[]
     return rows.map((r) => r.ts)
   }
 
@@ -84,6 +85,17 @@ export class Stats {
         )
         .all(sinceTs) as SummaryRow[]
     return { byModel: q("model"), byKey: q("COALESCE(key_alias, '-')") }
+  }
+
+  /** Request and token totals in a window, for the live rates in /v1/_status. */
+  rates(sinceTs: number): { requests: number; promptTokens: number; completionTokens: number } {
+    return this.db
+      .query(
+        `SELECT COUNT(*) AS requests, COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
+           COALESCE(SUM(completion_tokens), 0) AS completionTokens
+         FROM requests WHERE ts >= ?`,
+      )
+      .get(sinceTs) as { requests: number; promptTokens: number; completionTokens: number }
   }
 
   prune(beforeTs: number): number {

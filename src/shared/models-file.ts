@@ -34,7 +34,7 @@ function fail(path: string, why: string): never {
 export function validateModelsFile(x: unknown): ModelsFile {
   if (!isObj(x)) fail("(root)", "must be an object")
   if (x.schema !== 1) fail("schema", `must be 1 (got ${JSON.stringify(x.schema)})`)
-  if (typeof x.updated !== "string") fail("updated", "must be a date string")
+  if (typeof x.updated !== "string" || Number.isNaN(Date.parse(x.updated))) fail("updated", "must be a date string")
   const d = x.defaults
   if (!isObj(d) || !posInt(d.context) || !posInt(d.max_output)) fail("defaults", "needs positive integers context and max_output")
   const fb = x.fallbacks

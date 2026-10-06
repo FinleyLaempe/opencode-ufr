@@ -13,8 +13,7 @@
  */
 
 import type { ModelsFile } from "../shared/models-file"
-import type { FetchLike } from "./catalog-source"
-import { parseUfrModels } from "./catalog"
+import type { UfrModel } from "./catalog"
 import { fillerForTokens, parseLimitFromBody } from "./probe"
 
 /** No UFR model is known to exceed this; probing higher only risks an accepted (paid) rung. */
@@ -48,13 +47,23 @@ export type ProbeRow = {
   detail?: string
 }
 
+/**
+ * One model call. Through the gateway's relay (POST /v1/_relay) this gets the
+ * central key rotation and soft rate limiting for free — the call waits for a
+ * key slot instead of being told to back off, and UFR's status and body come
+ * back verbatim (a context probe needs the 400 body that names the limit).
+ */
+export type ProbeCallResult = { status: number; body: string; retryAfterMs?: number }
+export type ProbeCall = (body: Record<string, unknown>) => Promise<ProbeCallResult>
+
 export type ProbeAllDeps = {
-  baseUrl: string
-  key: string
-  fetch: FetchLike
+  call: ProbeCall
+  /** UFR's model list — the caller's job to fetch (gateway catalog or direct). */
+  ufr: UfrModel[]
   file: ModelsFile // known values + exclude list
   includePaid?: boolean
-  /** Pause between models — the per-key bucket is 20/min across ALL models. */
+  /** Pause between models for direct callers that pace themselves. The gateway
+   *  relay paces on its own — pass 0 there and the key pool decides. */
   paceMs?: number
   log: (m: string) => void
   now?: () => number
@@ -83,60 +92,58 @@ async function probeOne(o: ProbeAllDeps, id: string, known: number | null): Prom
   let last = { status: 0, body: "" }
   for (const size of sizesFor(known)) {
     for (let tries = 0; ; tries++) {
-      let res: Response
+      let res: ProbeCallResult
       try {
-        res = await o.fetch(`${o.baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${o.key}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: id,
-            max_tokens: 1,
-            messages: [{ role: "user", content: fillerForTokens(size) + "\n\nReply with exactly: OK" }],
-          }),
-          signal: AbortSignal.timeout(180_000),
-          redirect: "manual",
+        res = await o.call({
+          model: id,
+          max_tokens: 1,
+          messages: [{ role: "user", content: fillerForTokens(size) + "\n\nReply with exactly: OK" }],
         })
       } catch (e) {
         return { id, tier: "free", known, probed: floor.value || null,
           how: floor.value ? "accepted-floor" : "http-error", detail: `transport: ${(e as Error).message}` }
       }
-      if (res.ok) {
-        const j = (await res.json().catch(() => null)) as { usage?: { prompt_tokens?: number } } | null
+      if (res.status >= 200 && res.status < 300) {
+        const j = parseJson(res.body) as { usage?: { prompt_tokens?: number } } | null
         floor.value = j?.usage?.prompt_tokens ?? size
         break // accepted — try the next rung
       }
-      const text = await res.text().catch(() => "")
       if (res.status === 429 && tries < 2) {
-        o.log(`  ${id}: 429 at ${size} tokens — backing off 20 s`)
-        await doSleep(20_000)
-        continue // bucket, not a context answer — retry the same rung
+        // 429 through the relay means walled, pool-capped or budget: all rare.
+        // Respect the gateway's retry-after when it names one (capped so a
+        // 30-minute ladder doesn't stall a whole probe run).
+        const wait = Math.min(res.retryAfterMs ?? 20_000, 120_000)
+        o.log(`  ${id}: 429 at ${size} tokens — backing off ${Math.round(wait / 1000)} s`)
+        await doSleep(wait)
+        continue // not a context answer — retry the same rung
       }
-      last = { status: res.status, body: text }
+      last = { status: res.status, body: res.body }
       if (res.status === 400 || res.status === 413) {
-        const named = parseLimitFromBody(text)
+        const named = parseLimitFromBody(res.body)
         if (named) return { id, tier: "free", known, probed: named, how: "error-named" }
         return { id, tier: "free", known, probed: floor.value || null,
-          how: floor.value ? "accepted-floor" : "rejected-unnamed", detail: text.slice(0, 200) }
+          how: floor.value ? "accepted-floor" : "rejected-unnamed", detail: res.body.slice(0, 200) }
       }
       return { id, tier: "free", known, probed: floor.value || null,
-        how: floor.value ? "accepted-floor" : "http-error", detail: `HTTP ${res.status}: ${text.slice(0, 200)}` }
+        how: floor.value ? "accepted-floor" : "http-error", detail: `HTTP ${res.status}: ${res.body.slice(0, 200)}` }
     }
   }
   return { id, tier: "free", known, probed: floor.value || null, how: "accepted-floor",
     detail: last.status ? `last: HTTP ${last.status}` : undefined }
 }
 
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
 export async function probeAllContexts(o: ProbeAllDeps): Promise<ProbeRow[]> {
-  const res = await o.fetch(`${o.baseUrl}/models`, {
-    headers: { Authorization: `Bearer ${o.key}` },
-    signal: AbortSignal.timeout(20_000),
-    redirect: "manual",
-  })
-  if (!res.ok) throw new Error(`UFR /api/models: HTTP ${res.status}`)
-  const ufr = parseUfrModels(await res.json())
   const excluded = new Set(o.file.exclude)
   const rows: ProbeRow[] = []
-  for (const m of ufr) {
+  for (const m of o.ufr) {
     if (excluded.has(m.id)) {
       rows.push({ id: m.id, tier: m.tier, known: o.file.models[m.id]?.context ?? null, probed: null, how: "skipped-hidden" })
       continue
@@ -146,7 +153,7 @@ export async function probeAllContexts(o: ProbeAllDeps): Promise<ProbeRow[]> {
       continue
     }
     rows.push(await probeOne(o, m.id, o.file.models[m.id]?.context ?? null))
-    await (o.sleep ?? sleep)(o.paceMs ?? 3_000) // stay under the 20/min key bucket
+    if ((o.paceMs ?? 0) > 0) await (o.sleep ?? sleep)(o.paceMs!) // direct mode only: the relay paces itself
   }
   return rows
 }

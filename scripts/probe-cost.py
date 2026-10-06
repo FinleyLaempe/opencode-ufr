@@ -15,6 +15,7 @@ key comes from stdin (--key-stdin), an env var (--key-env) or an env file
 
   printf %s "$KEY" | python3 probe-cost.py --key-stdin --series A
 """
+
 import argparse
 import concurrent.futures
 import datetime
@@ -22,6 +23,7 @@ import json
 import os
 import random
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -84,7 +86,11 @@ def call(key: str, model: str, prompt: str, max_tokens: int):
     t = time.time()
     try:
         with urllib.request.urlopen(req, timeout=1200) as r:
-            status, headers, data = r.status, dict(r.headers.items()), json.loads(r.read())
+            status, headers, data = (
+                r.status,
+                dict(r.headers.items()),
+                json.loads(r.read()),
+            )
     except urllib.error.HTTPError as e:
         status, headers = e.code, dict(e.headers.items())
         data = {"error": e.read().decode(errors="replace")[:400]}
@@ -113,15 +119,29 @@ def main() -> None:
     redact = lambda s: str(s).replace(key, "<key>")
     run_id = uuid.uuid4().hex[:8]
     started = datetime.datetime.now(datetime.timezone.utc)
-    print(f"run {run_id}  series {args.series}  model {args.model}  start {started:%Y-%m-%d %H:%M:%S} UTC", flush=True)
+    print(
+        f"run {run_id}  series {args.series}  model {args.model}  start {started:%Y-%m-%d %H:%M:%S} UTC",
+        flush=True,
+    )
 
     if args.series == "A":
-        jobs = [("A", i, make_prompt(f"A-{i}-{run_id}", args.words, f"RUN {run_id} A{i}"), 20) for i in (1, 2, 3)]
+        jobs = [
+            (
+                "A",
+                i,
+                make_prompt(f"A-{i}-{run_id}", args.words, f"RUN {run_id} A{i}"),
+                20,
+            )
+            for i in (1, 2, 3)
+        ]
     elif args.series == "B":
         cached = make_prompt(f"B-{run_id}", args.words, f"RUN {run_id} B")
         jobs = [("B", i, cached, 20) for i in range(5)]
     else:
-        jobs = [("OUT", i, f"[{run_id}-{i}] {LONG_PROMPT}", args.out_tokens) for i in range(1, args.parallel + 1)]
+        jobs = [
+            ("OUT", i, f"[{run_id}-{i}] {LONG_PROMPT}", args.out_tokens)
+            for i in range(1, args.parallel + 1)
+        ]
 
     results = []
 
@@ -133,11 +153,19 @@ def main() -> None:
         costs = {k: v for k, v in u.items() if "cost" in k.lower()}
         costs.update({k: v for k, v in data.items() if "cost" in k.lower()})
         xh = {k: v for k, v in headers.items() if k.lower().startswith("x-")}
-        results.append({
-            "series": series, "i": i, "status": status, "secs": round(secs, 2), "usage": u,
-            "cost_fields": costs, "x_headers": xh, "error": data.get("error"),
-            "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        })
+        results.append(
+            {
+                "series": series,
+                "i": i,
+                "status": status,
+                "secs": round(secs, 2),
+                "usage": u,
+                "cost_fields": costs,
+                "x_headers": xh,
+                "error": data.get("error"),
+                "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+        )
         p = u.get("prompt_tokens") or 0
         print(
             f" {series:3} {i}  {status:>4} {secs:7.1f} {p:8} {cached_t:8} {p - cached_t:9} "
@@ -147,7 +175,10 @@ def main() -> None:
         if status != 200:
             print(f"      error: {redact(data.get('error'))}", flush=True)
 
-    print("ser  #  http    secs   prompt   cached  uncached  compl  reason  cost-fields", flush=True)
+    print(
+        "ser  #  http    secs   prompt   cached  uncached  compl  reason  cost-fields",
+        flush=True,
+    )
     if args.series == "OUT":
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as ex:
             futs = {ex.submit(call, key, args.model, j[2], j[3]): j for j in jobs}
@@ -161,21 +192,42 @@ def main() -> None:
     ended = datetime.datetime.now(datetime.timezone.utc)
     ok = [r for r in results if r["status"] == 200]
     p = sum((r["usage"].get("prompt_tokens") or 0) for r in ok)
-    c = sum(((r["usage"].get("prompt_tokens_details") or {}).get("cached_tokens") or 0) for r in ok)
+    c = sum(
+        ((r["usage"].get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+        for r in ok
+    )
     o = sum((r["usage"].get("completion_tokens") or 0) for r in ok)
     pct = lambda usd: f"${usd:.4f} = {usd / BUDGET * 100:.3f}%"
-    print(f"\nend {ended:%Y-%m-%d %H:%M:%S} UTC  ({(ended - started).total_seconds():.0f}s)")
-    print(f"totals: calls ok {len(ok)}/{len(results)}  prompt {p}  cached {c}  uncached {p - c}  completion {o}")
+    print(
+        f"\nend {ended:%Y-%m-%d %H:%M:%S} UTC  ({(ended - started).total_seconds():.0f}s)"
+    )
+    print(
+        f"totals: calls ok {len(ok)}/{len(results)}  prompt {p}  cached {c}  uncached {p - c}  completion {o}"
+    )
     print(f"  @ $0.40/Mtok, cache billed full: {pct((p + o) * PRICE)}")
     print(f"  @ $0.40/Mtok, cache free:        {pct((p - c + o) * PRICE)}")
     first = results[0] if results else {"x_headers": {}}
-    print(f"x-* headers (first call): {redact(sorted(first['x_headers'].items())) or 'none'}")
+    print(
+        f"x-* headers (first call): {redact(sorted(first['x_headers'].items())) or 'none'}"
+    )
 
-    out = f"/root/probe-cost-{started:%Y%m%d-%H%M%S}-{args.series}-{run_id}.json"
+    out = f"{tempfile.gettempdir()}/probe-cost-{started:%Y%m%d-%H%M%S}-{args.series}-{run_id}.json"
     with open(out, "w") as f:
-        f.write(redact(json.dumps({"run": run_id, "series": args.series, "model": args.model,
-                                   "start": started.isoformat(), "end": ended.isoformat(),
-                                   "results": results}, indent=2)))
+        f.write(
+            redact(
+                json.dumps(
+                    {
+                        "run": run_id,
+                        "series": args.series,
+                        "model": args.model,
+                        "start": started.isoformat(),
+                        "end": ended.isoformat(),
+                        "results": results,
+                    },
+                    indent=2,
+                )
+            )
+        )
     print(f"raw results: {out}")
 
 

@@ -5,10 +5,15 @@ export type Acquired = { kind: "ok"; alias: string; secret: string; waitMs: numb
 export type NotAcquired = { kind: "none"; reason: "no_keys" | "all_tried" | "exhausted"; retryAfterMs: number }
 export type KeySnapshot = { alias: string; used: number; cap: number; blockedForMs: number; invalid: boolean }
 
+/** A 401 can be transient (portal hiccup, short-lived token rotation): the key
+ *  is skipped for this long, then retried — instead of being dead until restart. */
+export const INVALID_KEY_TTL_MS = 10 * 60_000
+
 type Slot = KeyInfo & {
   window: SlidingWindow
   blockedUntil: number
-  invalid: boolean
+  /** Until when the key is considered invalid (0 = valid); a transient 401 expires. */
+  invalidUntil: number
   recent429: { at: number; model: string }[]
 }
 
@@ -24,14 +29,14 @@ export class KeyPool {
       ...k,
       window: new SlidingWindow({ cap: o.cap, windowMs: o.windowMs, maxWaitMs: o.maxWaitMs, now: o.now }),
       blockedUntil: 0,
-      invalid: false,
+      invalidUntil: 0,
       recent429: [],
     }))
   }
 
-  /** Number of keys not marked invalid. */
+  /** Number of keys not currently marked invalid. */
   get size(): number {
-    return this.slots.filter((s) => !s.invalid).length
+    return this.slots.filter((s) => s.invalidUntil <= this.o.now()).length
   }
 
   private find(alias: string): Slot | undefined {
@@ -44,7 +49,7 @@ export class KeyPool {
 
   acquire(exclude: ReadonlySet<string> = new Set()): Acquired | NotAcquired {
     const now = this.o.now()
-    const valid = this.slots.filter((s) => !s.invalid)
+    const valid = this.slots.filter((s) => s.invalidUntil <= now)
     if (valid.length === 0) return { kind: "none", reason: "no_keys", retryAfterMs: 0 }
     const usable = valid.filter((s) => !exclude.has(s.alias))
     if (usable.length === 0) return { kind: "none", reason: "all_tried", retryAfterMs: 0 }
@@ -93,7 +98,7 @@ export class KeyPool {
 
   onInvalid(alias: string): void {
     const s = this.find(alias)
-    if (s) s.invalid = true
+    if (s) s.invalidUntil = this.o.now() + INVALID_KEY_TTL_MS
   }
 
   snapshot(): KeySnapshot[] {
@@ -103,7 +108,7 @@ export class KeyPool {
       used: s.window.inWindow(),
       cap: this.o.cap,
       blockedForMs: Math.max(0, s.blockedUntil - now),
-      invalid: s.invalid,
+      invalid: s.invalidUntil > now,
     }))
   }
 }

@@ -1,4 +1,5 @@
 import { readText, writeFileAtomic } from "./fs"
+import { VPN_PASS, VPN_USER } from "./secrets"
 
 export type Config = {
   schema: 1
@@ -32,10 +33,10 @@ export const DEFAULTS: Config = {
   upstream: { baseUrl: "https://openwebui.uni-freiburg.de/api", requestTimeoutS: 600 },
   keys: [],
   limits: {
-    keyRpm: 18,
+    keyRpm: 19,
     keyWindowS: 60,
     keyMaxWaitS: 60,
-    poolPerHour: 800,
+    poolPerHour: 0, // 0 = pool limiter off. The old ~900/h model-group wall is gone (verified 2026-10-06); set a number to re-enable.
     poolWindowS: 3600,
     poolMaxWaitS: 20,
     maxUpstreamAttempts: 4,
@@ -47,6 +48,26 @@ export const DEFAULTS: Config = {
 }
 
 export class ConfigError extends Error {}
+
+/**
+ * Keys previous versions accepted and silently ignored. A legacy config must
+ * not brick startup over them: they are dropped (with a warning) instead of
+ * rejected, so the next saveConfig writes them out of the file for good.
+ */
+const REMOVED: Record<string, string> = {
+  catalog: "obsolete — models.json ships with the package; remove this key",
+}
+
+function deleteKey(obj: Record<string, unknown>, path: string): void {
+  const parts = path.split(".")
+  const last = parts.pop()!
+  let o: unknown = obj
+  for (const k of parts) {
+    if (!isObj(o)) return
+    o = o[k]
+  }
+  if (isObj(o)) delete o[last]
+}
 
 type Rule = "int>=0" | "int>=1" | "num>=0" | "bool" | "str" | "port|null" | "aliases" | "int>=1[]" | "transport" | "vpnMode"
 
@@ -128,12 +149,19 @@ function valid(v: unknown, rule: Rule): boolean {
   }
 }
 
-export function mergeConfig(raw: unknown): Config {
+export function mergeConfig(raw: unknown, warn?: (msg: string) => void): Config {
   if (raw !== undefined && !isObj(raw)) throw new ConfigError("config: the top level must be a JSON object")
   if (isObj(raw) && raw.schema !== undefined && raw.schema !== 1) {
     throw new ConfigError(`config: unsupported schema ${JSON.stringify(raw.schema)} (this version reads schema 1)`)
   }
   const cfg = deepMerge(structuredClone(DEFAULTS), raw ?? {}) as Config
+  for (const [key, why] of Object.entries(REMOVED)) {
+    if (get(cfg, key) === undefined) continue
+    deleteKey(cfg as unknown as Record<string, unknown>, key)
+    warn?.(`config: dropping removed key "${key}" — ${why}`)
+  }
+  // Type validation first: a present-but-mistyped section (e.g. "limits": null)
+  // must be reported as a type error, not as an unknown key.
   for (const [path, rule] of Object.entries(RULES)) {
     const v = get(cfg, path)
     if (!valid(v, rule)) throw new ConfigError(`config: ${path} is invalid (${JSON.stringify(v)}), expected ${rule}`)
@@ -143,8 +171,29 @@ export function mergeConfig(raw: unknown): Config {
       throw new ConfigError(`config: ${path} is too large (${JSON.stringify(v)}), ${what} at most ${max}`)
     }
   }
+  const unknown = unknownKeys(cfg as unknown as Record<string, unknown>)
+  if (unknown.length > 0) {
+    throw new ConfigError(`config: unknown key ${unknown.map((k) => JSON.stringify(k)).join(", ")} (typo?)`)
+  }
   if (new Set(cfg.keys).size !== cfg.keys.length) throw new ConfigError("config: keys contains duplicate aliases")
+  if (cfg.keys.includes(VPN_USER) || cfg.keys.includes(VPN_PASS)) {
+    throw new ConfigError(
+      `config: keys must not use the reserved names "${VPN_USER}" and "${VPN_PASS}" — they hold the uni login in the same keyring`,
+    )
+  }
   return { ...cfg, schema: 1 }
+}
+
+/** Paths in the merged config that no rule covers — almost always a typo (e.g. "keyrpm" for "keyRpm"). */
+function unknownKeys(obj: Record<string, unknown>, prefix = ""): string[] {
+  const out: string[] = []
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k
+    if (path === "schema" || Object.hasOwn(RULES, path)) continue // schema is checked above
+    if (isObj(v) && Object.keys(RULES).some((p) => p.startsWith(`${path}.`))) out.push(...unknownKeys(v, path))
+    else out.push(path)
+  }
+  return out
 }
 
 export async function loadConfig(file: string): Promise<Config> {
@@ -156,7 +205,7 @@ export async function loadConfig(file: string): Promise<Config> {
   } catch (e) {
     throw new ConfigError(`config: ${file} is not valid JSON (${(e as Error).message})`)
   }
-  return mergeConfig(raw)
+  return mergeConfig(raw, (m) => console.warn(`[opencode-ufr] ${m}`))
 }
 
 export async function saveConfig(file: string, cfg: Config): Promise<void> {

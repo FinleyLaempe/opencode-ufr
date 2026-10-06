@@ -1,7 +1,6 @@
 /**
  * Shared connect logic: parsing key lists and applying credentials to the
- * keyring + config. Used by the CLI (`ufr connect`) and by the plugin's
- * /connect integration watcher.
+ * keyring + config. Used by the plugin's /connect integration watcher.
  */
 
 import { loadConfig, saveConfig } from "./config"
@@ -65,7 +64,7 @@ export async function applyConnect(
     return { aliases: [], removedAliases: [], loginStored: false, changed: false, errors }
   }
   if (input.login && !EMAIL_RE.test(input.login.trim())) {
-    errors.push(`"${input.login}" does not look like a uni login`)
+    errors.push(`"${input.login.trim()}" does not look like a uni login`)
     return { aliases: [], removedAliases: [], loginStored: false, changed: false, errors }
   }
 
@@ -83,7 +82,7 @@ export async function applyConnect(
     }
   }
   const aliases: { alias: string; key: string }[] = []
-  let changed = beforeKeys !== [...custom, ...wanted].join("\n") || removedAliases.length > 0
+  let changed = beforeKeys !== [...custom, ...wanted].join("\n")
   for (let i = 0; i < keys.length; i++) {
     const alias = wanted[i]!
     if ((await o.secrets.get(alias)) !== keys[i]!) changed = true

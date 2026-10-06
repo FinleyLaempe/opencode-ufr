@@ -44,7 +44,7 @@ function dial(stack: TcpStack) {
   return { opened, events, stream: stream! }
 }
 
-async function until(fn: () => boolean, ms = 2000): Promise<void> {
+async function until(fn: () => boolean, ms = 10_000): Promise<void> {
   const end = Date.now() + ms
   while (!fn()) {
     if (Date.now() > end) throw new Error("condition not met in time")

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { applyProbeResults, formatProbeReport, probeAllContexts, sizesFor } from "../../src/daemon/probe-all"
+import type { UfrModel } from "../../src/daemon/catalog"
 import type { ModelsFile } from "../../src/shared/models-file"
 
 const FILE: ModelsFile = {
@@ -17,12 +18,12 @@ const FILE: ModelsFile = {
   },
 }
 
-const UFR_LIST = [
-  { id: "small-llmlb", name: "Small", connection_type: "local" },
-  { id: "grown-llmlb", name: "Grown", connection_type: "local" },
-  { id: "unknown-llmlb", name: "Unknown", connection_type: "local" },
-  { id: "external-llmlb", name: "External", connection_type: "external" },
-  { id: "standard-chat-ufr", name: "Standard", connection_type: "local" },
+const UFR_LIST: UfrModel[] = [
+  { id: "small-llmlb", name: "Small", tier: "free", vision: false },
+  { id: "grown-llmlb", name: "Grown", tier: "free", vision: false },
+  { id: "unknown-llmlb", name: "Unknown", tier: "free", vision: false },
+  { id: "external-llmlb", name: "External", tier: "paid", vision: false },
+  { id: "standard-chat-ufr", name: "Standard", tier: "free", vision: false },
 ]
 
 const LIMIT_NAMED = (n: number) =>
@@ -35,24 +36,20 @@ function fakeUfr(limits: Record<string, number>) {
   const calls: { model: string; approxTokens: number }[] = []
   return {
     calls,
-    fetch: async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/models")) {
-        return new Response(JSON.stringify(UFR_LIST), { status: 200 })
-      }
-      const body = JSON.parse(init!.body as string) as { model: string; messages: { content: string }[] }
-      const approxTokens = Math.round((body.messages[0]!.content.length * 2) / 9) // filler ≈ 4.5 chars/token
-      calls.push({ model: body.model, approxTokens })
-      const limit = limits[body.model]
-      if (approxTokens > limit) return new Response(LIMIT_NAMED(limit), { status: 400 })
-      return new Response(JSON.stringify({ usage: { prompt_tokens: approxTokens } }), { status: 200 })
+    call: async (body: Record<string, unknown>) => {
+      const b = body as { model: string; messages: { content: string }[] }
+      const approxTokens = Math.round((b.messages[0]!.content.length * 2) / 9) // filler ≈ 4.5 chars/token
+      calls.push({ model: b.model, approxTokens })
+      const limit = limits[b.model]
+      if (approxTokens > limit) return { status: 400, body: LIMIT_NAMED(limit) }
+      return { status: 200, body: JSON.stringify({ usage: { prompt_tokens: approxTokens } }) }
     },
   }
 }
 
-const deps = (f: (u: string, i?: RequestInit) => Promise<Response>, o: Partial<Parameters<typeof probeAllContexts>[0]> = {}) => ({
-  baseUrl: "https://ufr.test/api",
-  key: "k",
-  fetch: f,
+const deps = (call: (body: Record<string, unknown>) => Promise<{ status: number; body: string }>, o: Partial<Parameters<typeof probeAllContexts>[0]> = {}) => ({
+  call,
+  ufr: UFR_LIST,
   file: FILE,
   paceMs: 0,
   sleep: () => Promise.resolve(), // no real 20 s backoff in tests
@@ -62,16 +59,16 @@ const deps = (f: (u: string, i?: RequestInit) => Promise<Response>, o: Partial<P
 
 describe("probeAllContexts", () => {
   test("known context: one rejected rung names the exact limit", async () => {
-    const { fetch, calls } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 131_072, "unknown-llmlb": 262_144, "external-llmlb": 128_000 })
-    const rows = await probeAllContexts(deps(fetch))
+    const { call, calls } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 131_072, "unknown-llmlb": 262_144, "external-llmlb": 128_000 })
+    const rows = await probeAllContexts(deps(call))
     const small = rows.find((r) => r.id === "small-llmlb")!
     expect(small).toEqual({ id: "small-llmlb", tier: "free", known: 131_072, probed: 131_072, how: "error-named" })
     expect(calls.filter((c) => c.model === "small-llmlb")).toHaveLength(1) // no escalation needed
   })
 
   test("grown context escalates rungs and names the new limit", async () => {
-    const { fetch, calls } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 400_000, "unknown-llmlb": 262_144 })
-    const rows = await probeAllContexts(deps(fetch))
+    const { call, calls } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 400_000, "unknown-llmlb": 262_144 })
+    const rows = await probeAllContexts(deps(call))
     const grown = rows.find((r) => r.id === "grown-llmlb")!
     expect(grown.how).toBe("error-named")
     expect(grown.probed).toBe(400_000) // UFR renamed the limit at the rejected 524k rung
@@ -79,8 +76,8 @@ describe("probeAllContexts", () => {
   })
 
   test("unknown models use one oversized rung and name the limit", async () => {
-    const { fetch, calls } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 131_072, "unknown-llmlb": 262_144 })
-    const rows = await probeAllContexts(deps(fetch))
+    const { call, calls } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 131_072, "unknown-llmlb": 262_144 })
+    const rows = await probeAllContexts(deps(call))
     const unknown = rows.find((r) => r.id === "unknown-llmlb")!
     expect(unknown.how).toBe("error-named")
     expect(unknown.probed).toBe(262_144)
@@ -88,28 +85,27 @@ describe("probeAllContexts", () => {
   })
 
   test("paid models are skipped unless included; excluded models skipped always", async () => {
-    const { fetch } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 131_072, "unknown-llmlb": 262_144, "external-llmlb": 128_000 })
-    const rows = await probeAllContexts(deps(fetch))
+    const { call } = fakeUfr({ "small-llmlb": 131_072, "grown-llmlb": 131_072, "unknown-llmlb": 262_144, "external-llmlb": 128_000 })
+    const rows = await probeAllContexts(deps(call))
     expect(rows.find((r) => r.id === "external-llmlb")!.how).toBe("skipped-paid")
     expect(rows.find((r) => r.id === "standard-chat-ufr")!.how).toBe("skipped-hidden")
 
-    const paid = await probeAllContexts(deps(fetch, { includePaid: true }))
+    const paid = await probeAllContexts(deps(call, { includePaid: true }))
     expect(paid.find((r) => r.id === "external-llmlb")!.how).toBe("error-named")
   })
 
   test("429 retries the same rung and then still gets the answer", async () => {
     let rateLimited = false
-    const fetch = async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/models")) return new Response(JSON.stringify(UFR_LIST), { status: 200 })
-      const body = JSON.parse(init!.body as string) as { model: string }
-      if (body.model !== "small-llmlb") return new Response(LIMIT_NAMED(131_072), { status: 400 })
+    const call = async (body: Record<string, unknown>) => {
+      const b = body as { model: string }
+      if (b.model !== "small-llmlb") return { status: 400, body: LIMIT_NAMED(131_072) }
       if (!rateLimited) {
         rateLimited = true
-        return new Response("budget_exceeded", { status: 429 })
+        return { status: 429, body: "budget_exceeded" }
       }
-      return new Response(LIMIT_NAMED(131_072), { status: 400 })
+      return { status: 400, body: LIMIT_NAMED(131_072) }
     }
-    const rows = await probeAllContexts(deps(fetch))
+    const rows = await probeAllContexts(deps(call))
     expect(rows.find((r) => r.id === "small-llmlb")!.how).toBe("error-named")
   })
 })

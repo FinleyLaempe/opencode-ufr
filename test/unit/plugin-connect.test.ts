@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { CONNECT_POLL_MS, credentialToInput, registerConnect, UFR_INTEGRATION_ID } from "../../src/plugin/connect"
-import { daemonRequest } from "../../src/cli/daemon-client"
+import { daemonRequest } from "../../src/shared/daemon-client"
 import { loadConfig, mergeConfig, saveConfig } from "../../src/shared/config"
 import { applyConnect } from "../../src/shared/connect"
 import { daemonEnv } from "../support/daemon-env"
@@ -237,6 +237,12 @@ describe("applyConnect change detection", () => {
     const r2 = await applyConnect({ keys: "k1,k9" }, { paths: env.paths, secrets: env.secrets })
     expect(r2.changed).toBe(true)
     expect(await env.secrets.get("key2")).toBe("k9")
+  })
+
+  test("a malformed login is reported with its trimmed value", async () => {
+    env = await daemonEnv({ keys: {} })
+    const r = await applyConnect({ keys: "k1", login: "  bad login  " }, { paths: env.paths, secrets: env.secrets })
+    expect(r.errors).toEqual(['"bad login" does not look like a uni login'])
   })
 
   test("an identical re-apply leaves a running gateway alone (no idle-stop)", async () => {

@@ -2,14 +2,14 @@
  * The /connect integration: opencode's built-in provider-connect panel lists
  * the "unifreiburg" integration; this plugin replaces its key method with one
  * that shows the optional uni-login form (login + password) alongside the API
- * key(s). When the user submits, opencode stores a Credential with the form
+ * key. When the user submits, opencode stores a Credential with the form
  * answers; this module watches for it and applies it to the keyring + config,
  * then restarts the gateway so the keys go live.
  */
 
 import { applyConnect, splitKeys } from "../shared/connect"
 import type { Paths } from "../shared/paths"
-import { applyKeyChange, disconnectAll } from "../cli/keys"
+import { applyKeyChange, disconnectAll } from "../shared/keys"
 
 export const UFR_INTEGRATION_ID = "unifreiburg"
 
@@ -56,14 +56,14 @@ export async function registerConnect(d: ConnectDeps): Promise<ConnectRegistrati
   }
 
   // Replace the key method of the unifreiburg integration with ours: the
-  // standard API-key(s) prompt plus the optional uni-login form.
+  // standard API-key prompt plus the optional uni-login form.
   await ctx.integration.transform((editor: any) => {
     if (typeof editor?.method?.update !== "function") return
     editor.method.update({
       integrationID: UFR_INTEGRATION_ID,
       method: {
         type: "key",
-        label: "API keys (comma-separated)",
+        label: "API key",
         form: [
           {
             key: "login",

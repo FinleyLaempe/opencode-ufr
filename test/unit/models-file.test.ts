@@ -31,6 +31,11 @@ describe("validateModelsFile", () => {
     expect(() => validateModelsFile(withChange((x) => (x.aliases.foo = "nope")))).toThrow(/aliases\["foo"\]/)
   })
 
+  test("rejects an updated field that is not a parseable date", () => {
+    expect(() => validateModelsFile(withChange((x) => (x.updated = "soon")))).toThrow(/updated.*date string/)
+    expect(() => validateModelsFile(withChange((x) => (x.updated = 42)))).toThrow(/updated.*date string/)
+  })
+
   test("rejects non-objects and missing sections", () => {
     expect(() => validateModelsFile(null)).toThrow(ModelsFileError)
     expect(() => validateModelsFile(withChange((x) => delete x.fallbacks))).toThrow(/fallbacks/)

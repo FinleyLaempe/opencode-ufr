@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto"
 import { mkdir, open, rm, stat } from "node:fs/promises"
 import { dirname } from "node:path"
 import { loadConfig, saveConfig } from "../shared/config"
+import { readDaemonInfo } from "../shared/daemon-client"
 import { readJson, readText, writeFileAtomic } from "../shared/fs"
 import type { Paths } from "../shared/paths"
 import type { SecretStore } from "../shared/secrets"
@@ -44,6 +45,8 @@ export type StatusJson = {
   vpn: { mode: string; detail: string } | null
   spendToday: Record<string, number>
   dailyBudgetUsd: number
+  /** Rolling-window throughput — what /v1/_status dashboards display as req/s and tok/s. */
+  rates: { windowMs: number; requests: number; reqPerSec: number; tokensInPerSec: number; tokensOutPerSec: number }
 }
 
 export type DaemonOptions = {
@@ -116,8 +119,11 @@ export async function acquireLock(lockFile: string, o: AcquireLockOptions = {}):
     heldNonces.add(nonce)
     try {
       const fh = await open(lockFile, "wx")
-      await fh.writeFile(`${process.pid} ${nonce}`)
-      await fh.close()
+      try {
+        await fh.writeFile(`${process.pid} ${nonce}`)
+      } finally {
+        await fh.close() // a failed writeFile must not leak the fd
+      }
       nonceByLock.set(lockFile, nonce)
       return true
     } catch (e) {
@@ -173,8 +179,8 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
   const p = o.paths
   const config = await loadConfig(p.configFile)
   const confirmDaemon = async (pid: number): Promise<boolean> => {
-    const saved = (await readJson(p.daemonFile)) as { pid?: number; port?: number } | null
-    if (!saved || saved.pid !== pid || typeof saved.port !== "number") return false
+    const saved = await readDaemonInfo(p)
+    if (!saved || saved.pid !== pid) return false
     try {
       const res = await fetch(`http://127.0.0.1:${saved.port}/health`, { signal: AbortSignal.timeout(2_000) })
       if (!res.ok) return false
@@ -291,10 +297,17 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       try {
         for (const id of unknown.slice(0, 2)) {
           if (stopping) break
+          // Probes share UFR's rate-limit bucket with real traffic: reserve a
+          // key slot per probe and keep the admission (the router keeps a
+          // completed call's too), so probes cannot oversubscribe the bucket.
+          const reserved = keys.acquire()
+          if (reserved.kind === "none") break // pool exhausted — the next refresh probes again
+          if (reserved.waitMs > 0) await sleep(reserved.waitMs)
+          if (stopping) break
           const result = await probeContextLimit({
             model: id,
             baseUrl: config.upstream.baseUrl,
-            key: keyInfos[0]!.secret,
+            key: reserved.secret,
             transport,
             log,
           })
@@ -308,8 +321,10 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
           }
         }
         if (unknown.length > 0) {
-          const mf2 = await loadBundledModels({ bundledPath: o.bundledModelsPath })
-          catalog = buildCatalog(ufrModels, mf2.file, { allowPaid: config.allowPaid, probes: probeStore })
+          // Rebuild from the latest raw inputs: a newer catalog refresh may
+          // have replaced the catalog while these probes were in flight — the
+          // captured arguments are stale by now.
+          catalog = buildCatalog(lastUfrModels, lastModelsFile, { allowPaid: config.allowPaid, probes: probeStore })
           catalogInfo = { ...catalogInfo, loadedAt: now() }
         }
       } finally {
@@ -323,6 +338,8 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
         cachePath: p.ufrModelsCache, fetch: (u, i) => transport.fetch(u, i), log })
       catalog = buildCatalog(ufr.models, mf.file, { allowPaid: config.allowPaid, probes: probeStore })
       catalogInfo = { source: mf.source, ufrSource: ufr.source, loadedAt: now() }
+      lastUfrModels = ufr.models
+      lastModelsFile = mf.file
       if (ufr.error) Object.assign(reach, { ok: false, message: ufr.error, at: now() })
       else if (reach.ok !== true) Object.assign(reach, { ok: true, message: "", at: now() })
       for (const w of catalog.warnings) log(w)
@@ -331,6 +348,13 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       else clearCatalogRetry()
       void scheduleProbes(ufr.models, mf.file).catch(() => {}) // must not outlive a shutdown
     }
+    // Raw inputs of the catalog, for scripts that probe every model (GET /v1/_catalog).
+    // lastModelsFile is assigned by refreshCatalog() right below, before any
+    // reader runs: scheduleProbes only fires from refreshCatalog (after the
+    // assignment) and catalogData is only served once the server has started,
+    // which happens after this awaited call.
+    let lastUfrModels: UfrModel[] = []
+    let lastModelsFile: ModelsFile
     await refreshCatalog()
 
     const router = new Router({
@@ -349,6 +373,19 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
     const startedAt = now()
     let lastActivity = now()
     let port = 0
+    /** Throughput over the last 60 s, from completed requests (a running stream's tokens land here when it ends). */
+    const ratesSnapshot = (): StatusJson["rates"] => {
+      const windowMs = 60_000
+      const r = db.rates(now() - windowMs)
+      const sec = windowMs / 1000
+      return {
+        windowMs,
+        requests: r.requests,
+        reqPerSec: Math.round((r.requests / sec) * 100) / 100,
+        tokensInPerSec: Math.round(r.promptTokens / sec),
+        tokensOutPerSec: Math.round(r.completionTokens / sec),
+      }
+    }
     const status = (): StatusJson => ({
       version: VERSION,
       pid: process.pid,
@@ -364,27 +401,40 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       vpn: vpn ? { mode: vpn.status.mode, detail: vpn.status.detail } : null,
       spendToday: db.spendByKeySince(startOfLocalDay(now())),
       dailyBudgetUsd: config.dailyBudgetUsd,
+      rates: ratesSnapshot(),
     })
 
     let server: ReturnType<typeof startServer> | null = null
+    /** How long in-flight requests get to finish before connections and the db are force-closed. */
+    const drainGraceMs = 10_000
     const stop = async () => {
       if (stopping) return
       stopping = true
       for (const t of timers) clearInterval(t)
       clearCatalogRetry()
       try {
-        db.setKv("breakers", JSON.stringify(breakers.snapshot()))
-      } catch {
-        // db already closed
+        // Drain first: in-flight requests still write stats.record() through the
+        // db handle and owe their clients a response that server.stop(true)
+        // would reset. Idle shutdowns reach this loop with nothing in flight.
+        const deadline = now() + drainGraceMs
+        while (router.inFlight > 0 && now() < deadline) await sleep(50)
+        try {
+          db.setKv("breakers", JSON.stringify(breakers.snapshot()))
+        } catch {
+          // db already closed
+        }
+        server?.stop()
+        db.close()
+        await vpn?.stop()
+      } finally {
+        // Cleanup always runs — even when vpn.stop() or anything above throws —
+        // so no daemon-file/lock-file is left behind and onStopped still fires.
+        await rm(p.daemonFile, { force: true }).catch(() => {})
+        await rm(p.lockFile, { force: true }).catch(() => {})
+        releaseLockNonce(p.lockFile)
+        log("stopped")
+        o.onStopped?.()
       }
-      server?.stop()
-      db.close()
-      await vpn?.stop()
-      await rm(p.daemonFile, { force: true })
-      await rm(p.lockFile, { force: true })
-      releaseLockNonce(p.lockFile)
-      log("stopped")
-      o.onStopped?.()
     }
 
     const fixed = o.port !== undefined || config.port !== null
@@ -398,6 +448,8 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
           router,
           models: () => listModels(catalog),
           status,
+          draining: () => stopping,
+          catalogData: () => ({ ufr: lastUfrModels, file: lastModelsFile }),
           onActivity: () => {
             lastActivity = now()
           },

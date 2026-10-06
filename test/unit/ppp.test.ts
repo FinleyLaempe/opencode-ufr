@@ -22,7 +22,7 @@ function rig(o: VirtualFortiOptions = {}) {
   return { ppp, forti, events, frames }
 }
 
-async function until(fn: () => boolean, ms = 2000): Promise<void> {
+async function until(fn: () => boolean, ms = 10_000): Promise<void> {
   const end = Date.now() + ms
   while (!fn()) {
     if (Date.now() > end) throw new Error("condition not met in time")

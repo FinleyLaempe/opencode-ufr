@@ -1,12 +1,17 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 
 /** Write via a temp file + rename, so readers never see half a file. */
 export async function writeFileAtomic(file: string, data: string, mode?: number): Promise<void> {
   await mkdir(dirname(file), { recursive: true })
   const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
-  await writeFile(tmp, data, mode === undefined ? {} : { mode })
-  await rename(tmp, file)
+  try {
+    await writeFile(tmp, data, mode === undefined ? {} : { mode })
+    await rename(tmp, file)
+  } catch (e) {
+    await rm(tmp, { force: true }) // don't leak the temp file when the write or rename fails
+    throw e
+  }
 }
 
 /** File contents, or null if it does not exist. Other errors propagate. */

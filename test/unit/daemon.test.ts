@@ -1,6 +1,6 @@
 import { utimes } from "node:fs/promises"
 import { afterEach, describe, expect, test } from "bun:test"
-import { AlreadyRunningError, acquireLock } from "../../src/daemon/daemon"
+import { AlreadyRunningError, acquireLock, releaseLockNonce } from "../../src/daemon/daemon"
 import { loadConfig } from "../../src/shared/config"
 import { daemonEnv } from "../support/daemon-env"
 
@@ -51,9 +51,37 @@ describe("daemon", () => {
     expect(res.status).toBe(200)
   }, 20_000)
 
+  test("stop() drains in-flight requests instead of resetting them", async () => {
+    const e = await setup()
+    const d = await e.start()
+    e.ufr.delayMs = 500
+    const pending = e.api(d, "/v1/chat/completions", { method: "POST", body: chatBody })
+    await Bun.sleep(100) // the request is in flight now
+    await d.stop() // must wait for it instead of force-closing the connection
+    const res = await pending
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as any).choices[0].message.content).toBe("Hello")
+  }, 15_000)
+
+  test("once stop() began, new chat requests fast-fail with 503 while status keeps answering", async () => {
+    const e = await setup()
+    const d = await e.start()
+    e.ufr.delayMs = 500
+    const pending = e.api(d, "/v1/chat/completions", { method: "POST", body: chatBody })
+    await Bun.sleep(100) // the request is in flight now
+    const stopping = d.stop() // sets the draining flag synchronously
+    const late = await e.api(d, "/v1/chat/completions", { method: "POST", body: chatBody })
+    expect(late.status).toBe(503)
+    expect(await late.json()).toMatchObject({ error: { type: "draining" } })
+    expect((await e.api(d, "/v1/_status")).status).toBe(200) // still answerable during the drain
+    const res = await pending
+    expect(res.status).toBe(200) // the request admitted before the drain finishes
+    await stopping
+  }, 15_000)
+
   test("token and port survive a restart", async () => {
     const e = await setup()
-    const preferredPort = 41_000 + Math.floor(Math.random() * 2_000)
+    const preferredPort = 47_750 // fixed high port; the EADDRINUSE fallback handles collisions
     const a = await e.start({ port: undefined, preferredPort })
     expect((await loadConfig(e.paths.configFile)).port).toBe(a.port)
     const { port, token } = a
@@ -67,6 +95,7 @@ describe("daemon", () => {
     const e = await setup()
     const results = await Promise.all([acquireLock(e.paths.lockFile), acquireLock(e.paths.lockFile)])
     expect(results.filter(Boolean)).toHaveLength(1)
+    releaseLockNonce(e.paths.lockFile) // no stop() ran — forget the held nonce
   })
 
   test("a second daemon refuses to start", async () => {
@@ -79,6 +108,7 @@ describe("daemon", () => {
     const e = await setup()
     await Bun.write(e.paths.lockFile, "999999")
     expect(await acquireLock(e.paths.lockFile, { isAlive: () => false })).toBe(true)
+    releaseLockNonce(e.paths.lockFile)
   })
 
   test("a lock held by an unrelated live process is taken over once it is old", async () => {
@@ -87,6 +117,7 @@ describe("daemon", () => {
     const old = new Date(Date.now() - 120_000)
     await utimes(e.paths.lockFile, old, old)
     expect(await acquireLock(e.paths.lockFile, { isAlive: () => true, confirmDaemon: async () => false })).toBe(true)
+    releaseLockNonce(e.paths.lockFile)
   })
 
   test("a young lock of a live process is respected", async () => {
@@ -99,6 +130,7 @@ describe("daemon", () => {
     const e = await setup()
     await Bun.write(e.paths.lockFile, `${process.pid} deadbeef`)
     expect(await acquireLock(e.paths.lockFile)).toBe(true)
+    releaseLockNonce(e.paths.lockFile)
   })
 
   test("writes daemon.json and cleans up on shutdown", async () => {

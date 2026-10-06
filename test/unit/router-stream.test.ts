@@ -49,6 +49,21 @@ describe("Router, streaming", () => {
     expect(e.ufr.calls[0]!.aborted).toBe(true)
     expect(e.stats.summary(0).byModel[0]!.requests).toBe(1)
   })
+
+  test("a mid-stream upstream failure errors the client and records stream_error", async () => {
+    const e = setup()
+    e.ufr.failStreamAfterBytes = 20
+    const res = await e.chat({ model: GLM, stream: true })
+    expect(res.status).toBe(200)
+    const reader = res.body!.getReader()
+    expect((await reader.read()).done).toBe(false) // some bytes arrive first
+    await expect(reader.read()).rejects.toThrow() // then the stream dies
+    expect(e.router.inFlight).toBe(0)
+    // Stats has no raw-row accessor — read the recorded error_type directly.
+    const rows = (e.stats as any).db.query("SELECT error_type FROM requests").all() as { error_type: string | null }[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.error_type).toBe("stream_error")
+  })
 })
 
 describe("Router, reasoning retry", () => {

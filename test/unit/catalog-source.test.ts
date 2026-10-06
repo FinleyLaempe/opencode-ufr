@@ -66,6 +66,14 @@ describe("loadUfrModels", () => {
     expect(r.models.map((m) => m.id)).toEqual(["glm-5.2-llmlb"])
   })
 
+  test("a 3xx redirect is reported as a redirect and the cache is used", async () => {
+    await writeFile(join(dir, "ufr.json"), JSON.stringify([{ id: "glm-5.2-llmlb", name: "GLM", tier: "free", vision: false }]))
+    const url = serve(() => new Response(null, { status: 302, headers: { location: `${"https://openwebui.uni-freiburg.de"}/remote/login` } }))
+    const r = await loadUfrModels(ufrOpts(`${url}/api`, "sk-test"))
+    expect(r.source).toBe("cache")
+    expect(r.error).toContain("redirect")
+  })
+
   test("no key and no cache gives an empty list with the reason", async () => {
     const r = await loadUfrModels(ufrOpts("http://127.0.0.1:9/api", null))
     expect(r).toEqual({ models: [], source: "cache", error: "no key configured" })

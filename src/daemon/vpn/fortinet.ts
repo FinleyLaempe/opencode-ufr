@@ -8,6 +8,7 @@
 
 import tls from "node:tls"
 
+import { ipv4Parse } from "./ip"
 import { PppSession, type PppConfig, type PppOptions } from "./ppp"
 
 // -- framing -----------------------------------------------------------------
@@ -232,48 +233,46 @@ export type TunnelConfig = {
 }
 
 function attr(xml: string, tag: string, attribute: string): string | null {
-  const re = new RegExp(`<${tag}[^>]*\\b${attribute}=["']([^"']*)["']`, "i")
-  return re.exec(xml)?.[1] ?? null
+  // The attribute must live INSIDE the requested tag: <tag … attribute="value" …>.
+  // (?![\w-]) keeps longer tag names (dtls-config-x) from matching; the leading \s
+  // keeps attribute-name suffixes (x-ipv4) from matching. Order, whitespace around
+  // "=" and quote style all vary; tag and attribute names are case-insensitive.
+  const re = new RegExp(`<${tag}(?![\\w-])[^>]*?\\s${attribute}\\s*=\\s*(["'])([^"'>]*)\\1`, "i")
+  return re.exec(xml)?.[2] ?? null
+}
+
+/** A positive number, else the fallback ("" → 0 and NaN would silently kill the DPD keepalive). */
+function positiveNumber(v: string | null, fallback: number): number {
+  const n = v === null ? Number.NaN : Number(v)
+  return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
 export function parseTunnelConfig(xml: string): TunnelConfig {
   if (!/<sslvpn-tunnel/i.test(xml)) {
     throw new VpnAuthError("tunnel config: response is not a sslvpn-tunnel document (session dead?)")
   }
+  const innerIp = attr(xml, "assigned-addr", "ipv4") ?? ""
+  try {
+    ipv4Parse(innerIp)
+  } catch {
+    throw new VpnAuthError(`tunnel config: invalid inner ip "${innerIp}"`)
+  }
   const dns = [...xml.matchAll(/<dns[^>]*\bip=["']([^"']*)["']/gi)].map((m) => m[1]!)
   const routes = [...xml.matchAll(/<addr[^>]*\bip=["']([^"']*)["'][^>]*\bmask=["']([^"']*)["']/gi)].map((m) => ({ ip: m[1]!, mask: m[2]! }))
   return {
-    innerIp: attr(xml, "assigned-addr", "ipv4") ?? "",
+    innerIp,
     dns,
-    dpdS: Number(attr(xml, "dtls-config", "heartbeat-interval") ?? "10"),
+    dpdS: positiveNumber(attr(xml, "dtls-config", "heartbeat-interval"), 10),
     idleTimeoutS: Number(attr(xml, "idle-timeout", "val") ?? "0"),
     authTimeoutS: Number(attr(xml, "auth-timeout", "val") ?? "0"),
     routes,
   }
 }
 
-export async function fetchTunnelConfig(o: {
-  gateway: string
-  cookie: string
-  fetch?: typeof fetch
-}): Promise<TunnelConfig> {
-  const f = o.fetch ?? fetch
-  const res = await f(`${o.gateway.replace(/\/$/, "")}/remote/fortisslvpn_xml?dual_stack=1`, {
-    headers: { "User-Agent": FORTI_UA, Cookie: o.cookie },
-    redirect: "manual",
-  })
-  const text = await res.text().catch(() => "")
-  if (res.status !== 200 || /\/remote\/login/.test(res.headers.get("location") ?? "")) {
-    throw new VpnAuthError("tunnel config fetch failed — session invalid (HTTP " + res.status + ")")
-  }
-  return parseTunnelConfig(text)
-}
-
 // -- the tunnel ----------------------------------------------------------------
 
 export type TunnelHandle = {
   readonly config: TunnelConfig
-  readonly ppp: PppSession
   /** Clean teardown: PPP TERMREQ, close TLS, logout. */
   close(): Promise<void>
 }
@@ -288,6 +287,8 @@ export async function openTunnel(o: {
   onIp: (datagram: Uint8Array) => void
   pppOptions?: PppOptions
   log?: (msg: string) => void
+  /** Extra CA certs for tls.connect (tests against a local TLS peer). */
+  ca?: string
 }): Promise<TunnelHandle> {
   const log = o.log ?? (() => {})
   const url = new URL(o.gateway)
@@ -333,7 +334,11 @@ export async function openTunnel(o: {
         if (nl === -1) return // wait for more
         const size = parseInt(bodyBuf.subarray(pos, nl).toString(), 16)
         if (Number.isNaN(size)) return fail("broken chunked body in tunnel config response")
-        if (size === 0) { rest = bodyBuf.subarray(pos + 5); break } // skip "0\r\n\r\n"
+        if (size === 0) {
+          if (bodyBuf.length < pos + 5) return // wait for the full "0\r\n\r\n" terminator
+          rest = bodyBuf.subarray(pos + 5)
+          break
+        }
         if (bodyBuf.length < pos + nl + 2 + size + 2) return // wait for more
         out = Buffer.concat([out, bodyBuf.subarray(nl + 2, nl + 2 + size)])
         pos = nl + 2 + size + 2
@@ -345,9 +350,19 @@ export async function openTunnel(o: {
       body = httpBuf.subarray(bodyStart, bodyStart + cl)
       rest = httpBuf.subarray(bodyStart + cl)
     }
-    if (status !== 200) return fail(`tunnel config request failed (HTTP ${status}) — session invalid?`)
-    if (status === 200 && /\/remote\/login/i.test(head)) return fail("tunnel config redirected to login — session invalid")
-    config = parseTunnelConfig((body as Buffer).toString())
+    if (status !== 200) {
+      if (status >= 300 && status < 400) return fail("tunnel config redirected to login — session invalid")
+      return fail(`tunnel config request failed (HTTP ${status}) — session invalid?`)
+    }
+    if (/\/remote\/login/i.test(head)) return fail("tunnel config redirected to login — session invalid")
+    // Bun silently swallows exceptions thrown in socket data handlers — an escaping
+    // parse error would stall the tunnel to the establish timeout with zero log
+    // output. Every parse failure must go through fail().
+    try {
+      config = parseTunnelConfig((body as Buffer).toString())
+    } catch (e) {
+      return fail(`tunnel config invalid: ${(e as Error).message}`)
+    }
     log(`tunnel config: inner ip ${config.innerIp}, dns ${config.dns.join(", ") || "none"}, dpd ${config.dpdS}s`)
     // switch into tunnel phase: leftover bytes belong to the tunnel response
     httpBuf = Buffer.from(rest as Buffer)
@@ -414,6 +429,7 @@ export async function openTunnel(o: {
     servername: host,
     ALPNProtocols: ["http/1.1"], // the tunnel speaks HTTP/1.1 then switches to PPP frames
     rejectUnauthorized: true,
+    ...(o.ca ? { ca: o.ca } : {}),
   })
   socket.on("data", (chunk: Buffer) => {
     if (closed) return
@@ -465,9 +481,6 @@ export async function openTunnel(o: {
   return {
     get config(): TunnelConfig {
       return config ?? { innerIp: "", dns: [], dpdS: 10, idleTimeoutS: 0, authTimeoutS: 0, routes: [] }
-    },
-    get ppp(): PppSession {
-      return ppp!
     },
     close,
   }

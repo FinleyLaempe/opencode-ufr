@@ -115,6 +115,155 @@ export class Router {
     return this.jsonOut(slot.at, body, group, res, max, signal)
   }
 
+  /**
+   * One raw upstream call for local scripts (context probes, pdf2md): the same
+   * central key rotation and soft rate limiting as chat — the caller waits for
+   * a key slot instead of being told to back off — but no fallback chain, no
+   * context-hub hop and no reasoning retry. The caller gets exactly the model
+   * it asked for, with UFR's status and body passed through verbatim: a context
+   * probe needs the 400 body that names the limit, and a transcription needs
+   * the model it chose, not a fallback. Non-streaming by design.
+   */
+  async handleRelay(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+    this.active++
+    try {
+      return await this.relayOnce(body, signal)
+    } finally {
+      this.active--
+    }
+  }
+
+  private async relayOnce(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+    this.active++ // a long-lived relay must be visible in the status inFlight count
+    try {
+      return await this.relay(body, signal)
+    } finally {
+      this.active--
+    }
+  }
+
+  private async relay(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+    const t0 = this.d.now()
+    if (body.stream === true) {
+      return errorResponse(400, "invalid_request", "/v1/_relay is non-streaming — use /v1/chat/completions for streams")
+    }
+    const requested = typeof body.model === "string" ? body.model.trim() : ""
+    if (!requested) return errorResponse(400, "invalid_request", "body.model is required")
+    const cat = this.d.catalog()
+    const group = resolveModel(cat, requested)
+
+    if (!this.d.breakers.get(group).allow().allowed) {
+      return this.fail(t0, group, null, 0, false, "upstream_circuit_open",
+        errorResponse(429, "upstream_circuit_open",
+          `UFR is refusing ${group} right now; the gateway waits instead of hammering it`,
+          this.d.breakers.get(group).retryAfterMs()))
+    }
+
+    const slot = this.d.pool.reserve()
+    if (slot.verdict === "reject") {
+      // allow() above may have consumed a half-open probe that now never gets
+      // an outcome — resolve it so the ladder doesn't escalate on a probe timeout.
+      this.d.breakers.get(group).onOtherFailure()
+      return this.fail(t0, group, null, 0, false, "upstream_pool_cap",
+        errorResponse(429, "upstream_pool_cap", `hourly cap of ${this.d.config.limits.poolPerHour} requests reached`, slot.waitMs))
+    }
+    if (slot.waitMs > 0) {
+      try {
+        await this.d.sleep(slot.waitMs, signal)
+      } catch {
+        this.d.pool.release(slot.at)
+        this.d.breakers.get(group).onOtherFailure()
+        return this.fail(t0, group, null, 0, false, "client_closed",
+          errorResponse(499, "client_closed", "client went away while waiting for a slot"))
+      }
+    }
+
+    const k = this.d.keys.acquire()
+    if (k.kind === "none") {
+      this.d.breakers.get(group).onOtherFailure()
+      if (k.reason === "no_keys") {
+        return this.fail(t0, group, null, 0, true, "no_keys",
+          errorResponse(401, "no_keys", "no valid UFR API key configured — reconnect the Uni Freiburg integration in opencode's /connect"))
+      }
+      // exhausted or all_tried (relay excludes nothing, so all_tried cannot happen — belt and braces)
+      return this.fail(t0, group, null, 0, true, "key_pool_exhausted",
+        errorResponse(429, "key_pool_exhausted",
+          `every UFR key is at its limit of ${this.d.config.limits.keyRpm} requests per ${this.d.config.limits.keyWindowS} s`, k.retryAfterMs))
+    }
+    if (k.waitMs > 0) {
+      try {
+        await this.d.sleep(k.waitMs, signal)
+      } catch {
+        this.d.keys.release(k.alias, k.at)
+        this.d.breakers.get(group).onOtherFailure()
+        return this.fail(t0, group, null, 0, true, "client_closed",
+          errorResponse(499, "client_closed", "client went away while waiting for a key"))
+      }
+    }
+
+    let r: UpstreamResult
+    try {
+      r = await callUpstream({
+        transport: this.d.transport,
+        baseUrl: this.d.config.upstream.baseUrl,
+        key: k.secret,
+        body: { ...body, model: group },
+        timeoutMs: this.d.config.upstream.requestTimeoutS * 1000,
+        signal,
+        stream: false,
+      })
+    } catch (e) {
+      this.d.breakers.get(group).onOtherFailure() // the call's outcome never came back
+      if (signal?.aborted) {
+        return this.fail(t0, group, k.alias, 1, true, "client_closed",
+          errorResponse(499, "client_closed", "client went away"))
+      }
+      return this.fail(t0, group, k.alias, 1, true, "transport_unreachable",
+        errorResponse(503, "transport_unreachable", `UFR call failed (${e instanceof Error ? e.message : String(e)})`))
+    }
+    switch (r.kind) {
+      case "ok": {
+        this.d.breakers.get(group).onSuccess()
+        this.d.onUpstream?.(true, "")
+        const text = await r.response.text()
+        let json: unknown
+        try {
+          json = JSON.parse(text)
+        } catch {
+          // Not JSON — pass it through untouched rather than failing a call UFR answered.
+          this.record(t0, group, k.alias, 200, null, 1, null, true)
+          return new Response(text, { status: 200, headers: { "content-type": r.response.headers.get("content-type") ?? "application/json" } })
+        }
+        this.record(t0, group, k.alias, 200, usageOf(json), 1, null, true)
+        return Response.json(json)
+      }
+      case "rate_limited":
+        // A wall on the exact model the script asked for — honest breaker signal.
+        this.d.keys.onRateLimited(k.alias, group)
+        this.d.breakers.get(group).onRateLimited()
+        this.record(t0, group, k.alias, 429, null, 1, "upstream_rate_limited", true)
+        return new Response(r.body, { status: 429, headers: { "content-type": "application/json" } })
+      case "auth_invalid":
+        this.d.keys.onInvalid(k.alias)
+        this.d.breakers.get(group).onOtherFailure()
+        this.record(t0, group, k.alias, r.status, null, 1, "upstream_auth_invalid", true)
+        return new Response(r.body, { status: r.status, headers: { "content-type": "application/json" } })
+      case "context_overflow":
+        // UFR's own 400 naming the limit — the reason scripts use the relay. Not a wall.
+        this.d.breakers.get(group).onOtherFailure()
+        this.record(t0, group, k.alias, r.status, null, 1, "context_overflow", true)
+        return new Response(r.body, { status: r.status, headers: { "content-type": "application/json" } })
+      case "unreachable":
+        this.d.breakers.get(group).onOtherFailure()
+        this.d.onUpstream?.(false, r.message)
+        return this.fail(t0, group, k.alias, 1, true, "transport_unreachable", errorResponse(503, "transport_unreachable", r.message))
+      case "error":
+        this.d.breakers.get(group).onOtherFailure()
+        this.record(t0, group, k.alias, r.status, null, 1, `upstream_${r.status}`, true)
+        return new Response(r.body, { status: r.status, headers: { "content-type": r.contentType } })
+    }
+  }
+
   /** Upstream calls for one client request: other key, next model, context hub. */
   private async loop(
     body: Record<string, unknown>,
@@ -164,10 +313,11 @@ export class Router {
       if (k.kind === "none") {
         if (k.reason === "no_keys") {
           breakers.get(model).onOtherFailure() // model's probe (if any) got no outcome
-          return fail(401, "no_keys", "no valid UFR API key configured — run `ufr keys add <alias>`")
+          return fail(401, "no_keys", "no valid UFR API key configured — reconnect the Uni Freiburg integration in opencode's /connect")
         }
         if (k.reason === "exhausted") {
           breakers.get(model).onOtherFailure() // model's probe (if any) got no outcome
+          if (rateLimitedHere) giveUp(model) // the wall counts toward the breaker threshold even here
           return fail(429, "key_pool_exhausted",
             `every UFR key is at its limit of ${config.limits.keyRpm} requests per ${config.limits.keyWindowS} s`, k.retryAfterMs)
         }
@@ -190,7 +340,12 @@ export class Router {
       lastKey = k.alias
       const upstreamBody: Record<string, unknown> = { ...body, model }
       if (stream) {
-        upstreamBody.stream_options = { ...((body.stream_options as Record<string, unknown> | undefined) ?? {}), include_usage: true }
+        // Only spread a real object — a client sending stream_options as a
+        // string (or array) would otherwise be spread into garbage upstream.
+        const so = body.stream_options
+        const opts =
+          typeof so === "object" && so !== null && !Array.isArray(so) ? (so as Record<string, unknown>) : {}
+        upstreamBody.stream_options = { ...opts, include_usage: true }
       }
       // Bun's fetch does not propagate a body reader's cancel() into aborting the
       // underlying request — give streaming attempts their own controller so
@@ -277,30 +432,73 @@ export class Router {
   }
 
   private async jsonOut(ts: number, body: Record<string, unknown>, group: string, res: LoopOk, max: number, signal?: AbortSignal): Promise<Response> {
-    let json: unknown = await res.response.json()
+    let json: unknown
+    try {
+      json = await res.response.json()
+    } catch {
+      // A malformed 200 must not escape handleChat as Bun's default 500 with the
+      // pool slot never released — turn it into an honest error and give the slot
+      // back (poolAdmitted false: the released slot must not seed a phantom
+      // admission in the window rebuilt from stats after a restart).
+      this.d.pool.release(ts)
+      if (signal?.aborted) {
+        // A client abort during the body transfer also rejects json() — that is
+        // not bad upstream JSON: the call really happened, so record it as the
+        // client's doing, in the same shape as the other client-abort paths.
+        return this.fail(ts, res.model, res.keyAlias, res.attempts, false, "client_closed",
+          errorResponse(499, "client_closed", "client went away while the response body was transferred"))
+      }
+      return this.fail(ts, res.model, res.keyAlias, res.attempts, false, "upstream_bad_json",
+        errorResponse(502, "upstream_bad_json", "UFR answered 200 with a body that is not valid JSON"))
+    }
     let usage = usageOf(json)
     let cost = usage ? costUsd(this.priceOf(res.model), usage.prompt, usage.completion) : null
     let attempts = res.attempts
     let model = res.model
     let keyAlias = res.keyAlias
+    let retryErrorType: string | null = null
     if (isReasoningStarved(json) && attempts < max) {
-      const retry = await this.loop({ ...body, reasoning_effort: "none" }, group, res.model, false, max - attempts, signal)
-      attempts += retry.attempts
-      if (retry.ok) {
-        const again: unknown = await retry.response.json()
-        const u2 = usageOf(again)
-        // Price each call at the model it was actually answered by — a retry that
-        // falls back must not price the first call at the fallback's rate.
-        cost = addCost(cost, u2 ? costUsd(this.priceOf(retry.model), u2.prompt, u2.completion) : null)
-        usage = addUsage(usage, u2)
-        if (!isReasoningStarved(again)) {
-          json = again
-          model = retry.model
-          keyAlias = retry.keyAlias
+      // The retry is a real upstream call, so it takes a pool slot under the same
+      // acquire/wait/abort semantics as the main path — it must not evade the
+      // poolPerHour cap. When the pool cannot give one (rejected, or the client
+      // went away while waiting), keep the starved answer instead of failing.
+      const slot = this.d.pool.reserve()
+      let mayRetry = slot.verdict !== "reject"
+      if (mayRetry && slot.waitMs > 0) {
+        try {
+          await this.d.sleep(slot.waitMs, signal)
+        } catch {
+          this.d.pool.release(slot.at)
+          mayRetry = false
+        }
+      }
+      if (mayRetry) {
+        const retry = await this.loop({ ...body, reasoning_effort: "none" }, group, res.model, false, max - attempts, signal)
+        attempts += retry.attempts
+        if (retry.ok) {
+          try {
+            const again: unknown = await retry.response.json()
+            const u2 = usageOf(again)
+            // Price each call at the model it was actually answered by — a retry that
+            // falls back must not price the first call at the fallback's rate.
+            cost = addCost(cost, u2 ? costUsd(this.priceOf(retry.model), u2.prompt, u2.completion) : null)
+            usage = addUsage(usage, u2)
+            if (!isReasoningStarved(again)) {
+              json = again
+              model = retry.model
+              keyAlias = retry.keyAlias
+            }
+          } catch {
+            retryErrorType = "reasoning_retry_failed"
+          }
+        } else {
+          // The client still gets the starved 200 (intended graceful degradation),
+          // but the failed retry must show in stats instead of a clean errorType null.
+          retryErrorType = "reasoning_retry_failed"
         }
       }
     }
-    this.record(ts, model, keyAlias, 200, usage, attempts, null, true, cost)
+    this.record(ts, model, keyAlias, 200, usage, attempts, retryErrorType, true, cost)
     return Response.json(json)
   }
 

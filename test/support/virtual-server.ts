@@ -119,8 +119,9 @@ export class VirtualServerConn {
       }
     }
     if (f & FIN) {
+      if (seg.header.seq !== this.rcvNext) return // out-of-order FIN: drop it like the data path does
       this.peerClosed = true
-      if (seg.payload.length > 0 && seg.header.seq === this.rcvNext) {
+      if (seg.payload.length > 0) {
         this.received.push(seg.payload)
         this.rcvNext = (this.rcvNext + seg.payload.length) >>> 0
       }
@@ -134,7 +135,7 @@ export class VirtualServerConn {
         this.rcvNext = (this.rcvNext + seg.payload.length) >>> 0
         this.received.push(seg.payload)
         this.send({ flags: ACK }, new Uint8Array(0))
-      } else if (seg.header.seq + seg.payload.length <= this.rcvNext) {
+      } else if (((seg.header.seq + seg.payload.length) >>> 0) <= this.rcvNext) {
         this.send({ flags: ACK }, new Uint8Array(0)) // dup ack for old data
       }
     }

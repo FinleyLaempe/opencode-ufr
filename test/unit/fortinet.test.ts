@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { FrameReader, authenticate, parseTunnelConfig, wrapFrame, VpnChallengeError } from "../../src/daemon/vpn/fortinet"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import {
+  FrameReader,
+  authenticate,
+  openTunnel,
+  parseTunnelConfig,
+  wrapFrame,
+  VpnAuthError,
+  VpnChallengeError,
+} from "../../src/daemon/vpn/fortinet"
 
 describe("tunnel frame framing (0x5050)", () => {
   test("one complete frame", () => {
@@ -76,6 +87,85 @@ describe("tunnel config XML", () => {
   test("rejects a non-tunnel document (dead session)", () => {
     expect(() => parseTunnelConfig("<html>login</html>")).toThrow("sslvpn-tunnel")
   })
+
+  test("attributes are matched inside the requested tag only (regression: decoys on other elements were picked up)", () => {
+    // <dtls-config-x heartbeat-interval="99"/> matched tag "dtls-config" before the
+    // fix (no word boundary after the tag name); the "9.9.9.9" ipv4 sits on a foreign element.
+    const xml = `<?xml version="1.0"?>
+<sslvpn-tunnel ver="2">
+  <dtls-config-x heartbeat-interval="99"/>
+  <other ipv4="9.9.9.9"/>
+  <ipv4>
+    <assigned-addr ipv4="172.16.1.1"/>
+  </ipv4>
+</sslvpn-tunnel>`
+    const c = parseTunnelConfig(xml)
+    expect(c.innerIp).toBe("172.16.1.1")
+    expect(c.dpdS).toBe(10)
+  })
+
+  test("attribute-name suffixes do not hijack the match (regression: x-ipv4 shadowed ipv4)", () => {
+    const xml = `<sslvpn-tunnel><ipv4><assigned-addr ipv4="172.16.1.1" x-ipv4="9.9.9.9"/></ipv4></sslvpn-tunnel>`
+    expect(parseTunnelConfig(xml).innerIp).toBe("172.16.1.1")
+  })
+
+  test("attribute order, whitespace around '=' and single quotes all parse", () => {
+    const reordered = `<sslvpn-tunnel><ipv4><assigned-addr ipv4="172.16.1.1"/></ipv4><dtls-config heartbeat-fail-count="3" heartbeat-interval = "30"/></sslvpn-tunnel>`
+    expect(parseTunnelConfig(reordered).dpdS).toBe(30)
+    const quoted = `<sslvpn-tunnel><ipv4><assigned-addr ipv4 = '172.16.1.1'/></ipv4></sslvpn-tunnel>`
+    expect(parseTunnelConfig(quoted).innerIp).toBe("172.16.1.1")
+  })
+
+  test("dpd falls back to 10 s for empty, zero, negative, garbage or missing heartbeat intervals", () => {
+    const mk = (dtls: string) => parseTunnelConfig(SPEC_XML.replace(/<dtls-config[^>]*\/>/, dtls))
+    expect(mk("<dtls-config heartbeat-interval=''/>").dpdS).toBe(10) // Number("") === 0 killed the keepalive instantly
+    expect(mk("<dtls-config heartbeat-interval='0'/>").dpdS).toBe(10)
+    expect(mk("<dtls-config heartbeat-interval='-5'/>").dpdS).toBe(10)
+    expect(mk("<dtls-config heartbeat-interval='abc'/>").dpdS).toBe(10) // NaN meant no keepalives at all
+    expect(mk("<dtls-config/>").dpdS).toBe(10)
+    expect(mk("<dtls-config heartbeat-interval='30'/>").dpdS).toBe(30)
+  })
+
+  test("a malformed inner ip is a clean VpnAuthError, not a later tunnel framing error", () => {
+    expect(() => parseTunnelConfig(SPEC_XML.replace(/ipv4="172\.16\.1\.1"/, 'ipv4="not-an-ip"'))).toThrow(VpnAuthError)
+  })
+})
+
+// -- tunnel XML phase against a local TLS peer ----------------------------------
+
+test("a 200 with a garbage XML body fails the tunnel fast with a clear error (regression: the throw escaped into Bun's silent socket data handler and stalled to the timeout)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "forti-tls-"))
+  const key = join(dir, "key.pem")
+  const cert = join(dir, "cert.pem")
+  Bun.spawnSync(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-keyout", key, "-out", cert,
+    "-days", "1", "-nodes", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost"])
+  const server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { cert: Bun.file(cert), key: Bun.file(key) },
+    socket: {
+      data(s, chunk) {
+        if (new TextDecoder().decode(chunk).startsWith("GET /remote/fortisslvpn_xml")) {
+          // e.g. a captive portal answering 200 with HTML instead of the tunnel config
+          s.write("HTTP/1.1 200 OK\r\nContent-Length: 27\r\n\r\n<html>captive portal</html>")
+        }
+      },
+    },
+  })
+  const dead = new Promise<string>((resolve) => {
+    void openTunnel({
+      gateway: `https://localhost:${server.port}`,
+      cookie: "SVPNCOOKIE=x",
+      ca: readFileSync(cert, "utf8"),
+      onEstablished: () => {},
+      onDead: resolve,
+      onIp: () => {},
+    })
+  })
+  const reason = await Promise.race([dead, Bun.sleep(3_000).then(() => "STALLED")])
+  server.stop(true)
+  rmSync(dir, { recursive: true, force: true })
+  expect(reason).toContain("tunnel config invalid")
 })
 
 // -- auth against a fake Fortinet -----------------------------------------------

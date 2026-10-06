@@ -70,4 +70,22 @@ describe("the CONNECT proxy through the userspace stack", () => {
     socket.end()
     proxy.stop()
   })
+
+  test("lookalike domains that merely contain the suffix are refused (regression: evil-uni-freiburg.de passed endsWith)", async () => {
+    const server = new VirtualServer(SERVER, 443, (p) => stack.receive(p))
+    const stack = new TcpStack({ local: CLIENT, sink: (p) => server.receive(p) }, () => {})
+    const proxy = startProxy({ stack, remoteIp: SERVER })
+    const got: string[] = []
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: proxy.port,
+      socket: {
+        data(_s, chunk) { got.push(new TextDecoder().decode(chunk)) },
+      },
+    })
+    socket.write(new TextEncoder().encode("CONNECT evil-uni-freiburg.de:443 HTTP/1.1\r\n\r\n"))
+    await until(() => got.join("").includes("403"))
+    socket.end()
+    proxy.stop()
+  })
 })

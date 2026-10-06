@@ -23,7 +23,6 @@ export async function daemonEnv(o: { keys?: Record<string, string>; config?: Rec
     mergeConfig({
       keys: Object.keys(keys),
       upstream: { baseUrl: ufr.baseUrl },
-      catalog: { url: `${ufr.baseUrl}/no-such-models.json` },
       ...o.config,
     }),
   )

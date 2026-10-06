@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { KeyPool } from "../../src/daemon/keypool"
+import { INVALID_KEY_TTL_MS, KeyPool } from "../../src/daemon/keypool"
 import { FakeClock } from "../support/clock"
 
 const mk = (c: FakeClock, n = 3, cap = 18, maxWaitMs = 60_000) =>
@@ -80,6 +80,21 @@ describe("KeyPool", () => {
     p.onInvalid("k2")
     expect(p.acquire()).toEqual({ kind: "none", reason: "no_keys", retryAfterMs: 0 })
     expect(mk(c, 0).acquire()).toEqual({ kind: "none", reason: "no_keys", retryAfterMs: 0 })
+  })
+
+  test("a transient 401 invalidates a key only until the revalidation window passes", () => {
+    const c = new FakeClock()
+    const p = mk(c, 1)
+    p.onInvalid("k1")
+    expect(p.size).toBe(0)
+    expect(p.snapshot()[0]!.invalid).toBe(true)
+    expect(p.acquire()).toEqual({ kind: "none", reason: "no_keys", retryAfterMs: 0 })
+    c.advance(INVALID_KEY_TTL_MS - 1)
+    expect(p.acquire()).toEqual({ kind: "none", reason: "no_keys", retryAfterMs: 0 })
+    c.advance(1)
+    expect(p.size).toBe(1)
+    expect(p.snapshot()[0]!.invalid).toBe(false)
+    expect(alias(p.acquire())).toBe("k1")
   })
 
   test("excluding every valid key means all_tried", () => {

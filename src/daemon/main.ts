@@ -7,7 +7,13 @@ const paths = resolvePaths()
 const log = createLogger(paths.logFile)
 try {
   const d = await startDaemon({ paths, secrets: new KeyringStore(), log, onStopped: () => process.exit(0) })
-  for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => void d.stop())
+  let stopping = false
+  for (const sig of ["SIGINT", "SIGTERM"] as const)
+    process.on(sig, () => {
+      if (stopping) process.exit(1) // second signal: stop() is hanging — get out now
+      stopping = true
+      void d.stop()
+    })
 } catch (e) {
   if (e instanceof AlreadyRunningError) {
     log("another daemon is already running — exiting")

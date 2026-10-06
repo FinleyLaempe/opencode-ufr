@@ -70,7 +70,7 @@ describe("VpnManager", () => {
     const m = new VpnManager({ gateway: "https://fortivpn.example", upstreamHost: "x", baseUrl: ufr.url, credentials: NO_CREDENTIALS, log: LOG })
     expect(await m.ensurePath()).toBe("failed")
     expect(m.status.mode).toBe("failed")
-    expect(m.status.detail).toContain("ufr login add")
+    expect(m.status.detail).toContain("uni login")
   })
 
   test("VPN page + login + gateway rejects the password → failed, credentials error", async () => {
@@ -125,5 +125,18 @@ describe("VpnManager", () => {
     await m.ensurePath()
     await m.ensurePath()
     expect(ufr.calls.length).toBe(after)
+  })
+
+  test("stop() during an in-flight connect shuts down cleanly instead of leaking the attempt", async () => {
+    const ufr = fakeUfr({ type: "html" })
+    const gw = silentGateway()
+    const m = new VpnManager({ gateway: gw.url, upstreamHost: "x", baseUrl: ufr.url, credentials: CREDS, log: LOG, loginTimeoutMs: 60_000 })
+    const inFlight = m.ensurePath() // connect starts, the silent gateway stalls it
+    await Bun.sleep(50)
+    await m.stop()
+    expect(m.status.mode).toBe("off")
+    expect(m.status.detail).toBe("stopped")
+    // the stalled attempt fails on its own later; connect() swallows it because stopped
+    inFlight.catch(() => {})
   })
 })
