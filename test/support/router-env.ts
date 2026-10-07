@@ -1,6 +1,7 @@
 import { BreakerRegistry } from "../../src/daemon/breaker"
 import { buildCatalog, parseUfrModels } from "../../src/daemon/catalog"
 import { KeyPool } from "../../src/daemon/keypool"
+import { ThroughputMeter } from "../../src/daemon/meter"
 import { Router } from "../../src/daemon/router"
 import { Stats } from "../../src/daemon/stats"
 import { type Transport, directTransport } from "../../src/daemon/transport"
@@ -33,6 +34,7 @@ export function routerEnv(o: { keys?: string[]; config?: Record<string, unknown>
   })
   const catalog = buildCatalog(parseUfrModels(UFR_RAW_MODELS), TEST_MODELS_FILE, { allowPaid: config.allowPaid })
   const stats = new Stats(":memory:")
+  const meter = new ThroughputMeter({ now: clock.now, horizonMs: 60_000 })
   const sleeps: number[] = []
   const reach: { ok: boolean; message: string }[] = []
   const router = new Router({
@@ -42,6 +44,7 @@ export function routerEnv(o: { keys?: string[]; config?: Record<string, unknown>
     pool,
     breakers,
     stats,
+    meter,
     transport: o.transport ?? directTransport,
     now: clock.now,
     sleep: async (ms, signal) => {
@@ -53,7 +56,7 @@ export function routerEnv(o: { keys?: string[]; config?: Record<string, unknown>
   })
   const chat = (body: Record<string, unknown>, signal?: AbortSignal) =>
     router.handleChat({ messages: [{ role: "user", content: "Hi" }], ...body }, signal)
-  return { ufr, clock, config, keys, pool, breakers, catalog, stats, router, chat, sleeps, reach, stop: () => ufr.stop() }
+  return { ufr, clock, config, keys, pool, breakers, catalog, stats, meter, router, chat, sleeps, reach, stop: () => ufr.stop() }
 }
 
 export async function errorOf(res: Response): Promise<{ type: string; message: string }> {

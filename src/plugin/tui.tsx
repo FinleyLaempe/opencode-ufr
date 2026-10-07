@@ -8,7 +8,8 @@
  * Polls GET /v1/_status every second and appends lines to the right panel:
  * one compact line per pool key (alias, $ spent today or the real spend from
  * UFR's budget error, daily budget in USD, why it is blocked) above the
- * per-minute rates line (raw counts of the gateway's rolling 60 s window).
+ * rates line: requests per minute and live tokens per second (a running
+ * stream counts while it streams — see meter.ts).
  * Status polls don't reset the daemon's idle timer (see server.ts),
  * so leaving the panel open never keeps the gateway alive.
  */
@@ -20,9 +21,12 @@ import { resolvePaths, type Paths } from "../shared/paths"
 /** The rates block of GET /v1/_status (see StatusJson in daemon.ts). */
 type Rates = {
   windowMs: number
-  /** Raw window counts — a 60 s window, so these ARE the per-minute numbers. */
+  /** Requests finished in the 60 s window. */
   requests: number
+  /** Missing on daemons older than 0.2.15. */
+  reqPerMin?: number
   reqPerSec: number
+  /** Live: a running stream's output counts as it streams (short window). */
   tokensInPerSec: number
   tokensOutPerSec: number
 }
@@ -117,11 +121,9 @@ function RatesLine(props: { paths: Paths }) {
   const label = () => {
     const r = status()?.rates
     if (!r) return null
-    // The daemon's rates window is exactly 60 s, so the raw request count IS
-    // req/min; the per-second token numbers ×60 give the same window counts
-    // (daemon.ts rounds them, invisible at fmtTokens precision).
-    const perMin = (perSec: number) => Math.round(perSec * 60)
-    return `UFR ${r.requests} req/min · ${fmtTokens(perMin(r.tokensOutPerSec))} tok/min out · ${fmtTokens(perMin(r.tokensInPerSec))} tok/min in`
+    // Older daemons serve no reqPerMin; their 60 s window count is the same number.
+    const reqPerMin = r.reqPerMin ?? r.requests
+    return `UFR ${reqPerMin} req/min · ${fmtTokens(r.tokensOutPerSec)} tok/s out · ${fmtTokens(r.tokensInPerSec)} tok/s in`
   }
   return (
     <Show when={status()}>

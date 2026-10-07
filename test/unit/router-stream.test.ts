@@ -50,6 +50,22 @@ describe("Router, streaming", () => {
     expect(e.stats.summary(0).byModel[0]!.requests).toBe(1)
   })
 
+  test("the live meter counts streamed output while the stream is still running", async () => {
+    const e = setup()
+    e.ufr.streamChunkDelayMs = 200
+    const res = await e.chat({ model: GLM, stream: true })
+    const reader = res.body!.getReader()
+    const dec = new TextDecoder()
+    let seen = ""
+    while (!seen.includes('"Hel"')) seen += dec.decode((await reader.read()).value)
+    // mid-stream: an estimate is already there, the request itself is not counted yet
+    expect(e.meter.sum(60_000).tokensOut).toBeGreaterThan(0)
+    expect(e.meter.sum(60_000).requests).toBe(0)
+    while (!(await reader.read()).done) {}
+    // done: the estimate is corrected to UFR's real usage (fake: 10 prompt, 2 completion)
+    expect(e.meter.sum(60_000)).toEqual({ requests: 1, tokensIn: 10, tokensOut: 2 })
+  })
+
   test("a mid-stream upstream failure errors the client and records stream_error", async () => {
     const e = setup()
     e.ufr.failStreamAfterBytes = 20

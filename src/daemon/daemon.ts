@@ -15,6 +15,7 @@ import { type Catalog, EMPTY_CATALOG, buildCatalog, listModels } from "./catalog
 import { type FetchLike, type ModelsSource, loadBundledModels, loadUfrModels } from "./catalog-source"
 import type { ModelsFile } from "../shared/models-file"
 import { type KeyInfo, KeyPool, type KeySnapshot } from "./keypool"
+import { ThroughputMeter } from "./meter"
 import { loadProbes, probeContextLimit, saveProbe } from "./probe"
 import { type UfrModel } from "./catalog"
 import { Router } from "./router"
@@ -29,6 +30,11 @@ export class AlreadyRunningError extends Error {
     super("another opencode-ufr daemon is already running")
   }
 }
+
+/** Requests per minute are counted over a full minute. */
+const RATE_WINDOW_MS = 60_000
+/** tok/s over a short window: long enough to smooth chunk bursts, short enough to follow a running stream. */
+const TOKEN_WINDOW_MS = 10_000
 
 export type StatusJson = {
   version: string
@@ -46,7 +52,16 @@ export type StatusJson = {
   spendToday: Record<string, number>
   dailyBudgetUsd: number
   /** Rolling-window throughput — what /v1/_status dashboards display as req/s and tok/s. */
-  rates: { windowMs: number; requests: number; reqPerSec: number; tokensInPerSec: number; tokensOutPerSec: number }
+  /** Live throughput: requests over `windowMs` (60 s), tokens over the shorter `tokensWindowMs` so tok/s follows a running stream. */
+  rates: {
+    windowMs: number
+    requests: number
+    reqPerMin: number
+    reqPerSec: number
+    tokensWindowMs: number
+    tokensInPerSec: number
+    tokensOutPerSec: number
+  }
 }
 
 export type DaemonOptions = {
@@ -357,6 +372,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
     let lastModelsFile: ModelsFile
     await refreshCatalog()
 
+    const meter = new ThroughputMeter({ now, horizonMs: RATE_WINDOW_MS })
     const router = new Router({
       config,
       catalog: () => catalog,
@@ -364,6 +380,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       pool,
       breakers,
       stats: db,
+      meter,
       transport,
       now,
       sleep,
@@ -373,17 +390,24 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
     const startedAt = now()
     let lastActivity = now()
     let port = 0
-    /** Throughput over the last 60 s, from completed requests (a running stream's tokens land here when it ends). */
+    /**
+     * Live throughput from the in-memory meter: a running stream's output is
+     * counted as it passes through, not when it ends. Requests are counted
+     * when they finish, over a minute; tokens over a short window so tok/s
+     * reacts within seconds instead of averaging a whole minute.
+     */
     const ratesSnapshot = (): StatusJson["rates"] => {
-      const windowMs = 60_000
-      const r = db.rates(now() - windowMs)
-      const sec = windowMs / 1000
+      const r = meter.sum(RATE_WINDOW_MS)
+      const t = meter.sum(TOKEN_WINDOW_MS)
+      const tokSec = TOKEN_WINDOW_MS / 1000
       return {
-        windowMs,
+        windowMs: RATE_WINDOW_MS,
         requests: r.requests,
-        reqPerSec: Math.round((r.requests / sec) * 100) / 100,
-        tokensInPerSec: Math.round(r.promptTokens / sec),
-        tokensOutPerSec: Math.round(r.completionTokens / sec),
+        reqPerMin: Math.round(r.requests * (60_000 / RATE_WINDOW_MS)),
+        reqPerSec: Math.round((r.requests / (RATE_WINDOW_MS / 1000)) * 100) / 100,
+        tokensWindowMs: TOKEN_WINDOW_MS,
+        tokensInPerSec: Math.round(t.tokensIn / tokSec),
+        tokensOutPerSec: Math.round(t.tokensOut / tokSec),
       }
     }
     const status = (): StatusJson => ({

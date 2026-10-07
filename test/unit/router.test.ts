@@ -27,6 +27,12 @@ describe("Router, non-streaming", () => {
     expect(row.costUsd).toBeCloseTo(4.8e-6, 12)
   })
 
+  test("a finished request lands in the live meter with its real usage", async () => {
+    const e = setup()
+    await (await e.chat({ model: GLM })).json()
+    expect(e.meter.sum(60_000)).toEqual({ requests: 1, tokensIn: 10, tokensOut: 2 })
+  })
+
   test("resolves alias spellings before calling UFR", async () => {
     const e = setup()
     await e.chat({ model: "gpt-5.6-llmlb" })

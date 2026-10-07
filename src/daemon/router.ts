@@ -3,6 +3,7 @@ import { errorResponse } from "../shared/errors"
 import type { BreakerRegistry } from "./breaker"
 import { type Catalog, resolveModel } from "./catalog"
 import type { KeyPool } from "./keypool"
+import type { ThroughputMeter } from "./meter"
 import { type Stats, costUsd } from "./stats"
 import type { Transport } from "./transport"
 import { type UpstreamResult, callUpstream } from "./upstream"
@@ -15,6 +16,8 @@ export type RouterDeps = {
   pool: SlidingWindow
   breakers: BreakerRegistry
   stats: Stats
+  /** Live throughput for /v1/_status; optional so scripts and older wiring work without it. */
+  meter?: ThroughputMeter
   transport: Transport
   now: () => number
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>
@@ -43,6 +46,32 @@ function addCost(a: number | null, b: number | null): number | null {
 }
 
 type Choice = { finish_reason?: string; message?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null } }
+
+type Delta = {
+  content?: unknown
+  reasoning_content?: unknown
+  reasoning?: unknown
+  tool_calls?: { function?: { arguments?: unknown } }[]
+}
+
+/** Rough tokens in one SSE chunk (~4 chars per token) — only a live estimate; the usage chunk corrects it. */
+export function estimateChunkTokens(json: unknown): number {
+  const choices = (json as { choices?: { delta?: Delta }[] } | null)?.choices
+  if (!Array.isArray(choices)) return 0
+  let chars = 0
+  const add = (v: unknown) => {
+    if (typeof v === "string") chars += v.length
+  }
+  for (const c of choices) {
+    const d = c?.delta
+    if (!d) continue
+    add(d.content)
+    add(d.reasoning_content)
+    add(d.reasoning)
+    if (Array.isArray(d.tool_calls)) for (const t of d.tool_calls) add(t?.function?.arguments)
+  }
+  return chars / 4
+}
 
 /** glm-5.2 can spend its whole budget thinking and return no text (observed 2026-09-08). */
 export function isReasoningStarved(json: unknown): boolean {
@@ -553,11 +582,16 @@ export class Router {
     let buf = ""
     let usage: Usage | null = null
     let finished = false
+    let estimatedOut = 0
     this.active++ // handleChat's own count ends when it returns; the stream keeps one until it is done
     const finish = (errorType: string | null) => {
       if (finished) return
       finished = true
       this.active--
+      // record() adds UFR's real usage to the meter; take the live estimate back
+      // out so the stream is counted once. Without a usage chunk (stream died)
+      // the estimate is the best number there is — it stays.
+      if (usage && estimatedOut > 0) this.d.meter?.add({ tokensOut: -estimatedOut })
       this.record(ts, res.model, res.keyAlias, 200, usage, res.attempts, errorType, true)
     }
     const scan = (chunk: Uint8Array) => {
@@ -570,8 +604,14 @@ export class Router {
         const data = line.slice(5).trim()
         if (!data || data === "[DONE]") continue
         try {
-          const u = usageOf(JSON.parse(data))
+          const parsed: unknown = JSON.parse(data)
+          const u = usageOf(parsed)
           if (u) usage = u
+          const est = estimateChunkTokens(parsed)
+          if (est > 0) {
+            estimatedOut += est
+            this.d.meter?.add({ tokensOut: est })
+          }
         } catch {
           // not JSON: pass it through untouched
         }
@@ -607,6 +647,7 @@ export class Router {
   private record(ts: number, model: string, keyAlias: string | null, status: number, usage: Usage | null,
     attempts: number, errorType: string | null, poolAdmitted: boolean, costOverride?: number | null): void {
     const cost = costOverride !== undefined ? costOverride : (usage ? costUsd(this.priceOf(model), usage.prompt, usage.completion) : null)
+    this.d.meter?.add({ requests: 1, tokensIn: usage?.prompt ?? 0, tokensOut: usage?.completion ?? 0 })
     this.d.stats.record({
       ts,
       model,
