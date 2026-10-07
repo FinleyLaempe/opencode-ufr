@@ -4,8 +4,8 @@
  * (index.ts) needs no changes for this to load.
  *
  * Polls GET /v1/_status every second and appends lines to the right panel:
- * one compact line per pool key (alias, $ spent today, request cap, why it is
- * blocked) above the req/s and tok/s line over the gateway's rolling 60 s
+ * one compact line per pool key (alias, $ spent today, daily budget in USD,
+ * why it is blocked) above the req/s and tok/s line over the gateway's rolling 60 s
  * window. Status polls don't reset the daemon's idle timer (see server.ts),
  * so leaving the panel open never keeps the gateway alive.
  */
@@ -54,7 +54,7 @@ function fmtMoney(v: number): string {
 }
 
 /**
- * One compact line per pool key: `k1 $0.42/20`, with the reason appended when
+ * One compact line per pool key: `k1 $0.42/$20.00`, with the reason appended when
  * the key is unusable — `budget` (daily cap hit, resets at local midnight),
  * `rate` (bucket 429 cool-down) or `invalid` (transient 401). A key with no
  * entry in spendToday renders as $0.00; healthy keys render too, the user
@@ -62,10 +62,10 @@ function fmtMoney(v: number): string {
  */
 function keyLine(k: KeyStatus, s: Status): string {
   const spend = s.spendToday?.[k.alias] ?? 0
-  let line = `${k.alias} ${fmtMoney(spend)}/${k.cap}`
+  let line = `${k.alias} ${fmtMoney(spend)}/${fmtMoney(s.dailyBudgetUsd ?? 0)}`
   if (k.invalid) line += " invalid"
   else if (k.blockedBy === "budget") line += " budget"
-  else if (k.blockedBy === "rate" && k.blockedForMs > 0) line += " rate"
+  else if (k.blockedBy === "rate") line += " rate"
   return line
 }
 
