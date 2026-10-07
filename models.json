@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-05",
+  "updated": "2026-10-07",
   "defaults": {
     "context": 131072,
     "max_output": 16384
@@ -189,6 +189,38 @@
         "cache_read": 0.25,
         "cache_write": 3.125
       }
+    },
+    "openai/gpt-6-astra-llmlb": {
+      "context": 1050000,
+      "max_output": 128000,
+      "price": {
+        "input": 10,
+        "output": 50,
+        "cache_write": 12.5
+      },
+      "note": "context/max_output from OpenAI's model page (2026-10-07), not probed at UFR; cache_read unknown — billed at full input"
+    },
+    "openai/gpt-6.1-sol-llmlb": {
+      "context": 1050000,
+      "max_output": 128000,
+      "price": {
+        "input": 2,
+        "output": 10,
+        "cache_read": 0.1,
+        "cache_write": 2.5
+      },
+      "note": "context/max_output from OpenAI's model page (2026-10-07), not probed at UFR"
+    },
+    "openai/gpt-6-luna-llmlb": {
+      "context": 1050000,
+      "max_output": 128000,
+      "price": {
+        "input": 0.1,
+        "output": 0.5,
+        "cache_read": 0.01,
+        "cache_write": 0.125
+      },
+      "note": "context/max_output from OpenAI's model page (2026-10-07), not probed at UFR"
     },
     "openai/gpt-5.3-codex-llmlb": {
       "context": 1000000,
