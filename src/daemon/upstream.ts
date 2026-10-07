@@ -4,12 +4,16 @@ import type { Transport } from "./transport"
 export type UpstreamResult =
   | { kind: "ok"; response: Response }
   | { kind: "rate_limited"; status: number; body: string }
+  | { kind: "budget_exhausted"; status: number; body: string; spend?: number; limit?: number }
   | { kind: "context_overflow"; status: number; body: string }
   | { kind: "auth_invalid"; status: number; body: string }
   | { kind: "unreachable"; message: string }
   | { kind: "error"; status: number; body: string; contentType: string }
 
 const CONTEXT_RE = /maximum context length|max input tokens|context length|context window|too many tokens|prompt is too long/i
+
+/** UFR's budget body names the numbers: `... Spend=24.0425389, Budget=20.0`. */
+const BUDGET_RE = /Spend=([0-9.]+),\s*Budget=([0-9.]+)/
 
 /** One call to UFR. Throws only if the caller's own signal aborted. */
 export async function callUpstream(o: {
@@ -72,6 +76,14 @@ export async function callUpstream(o: {
   }
   if (res.ok) return { kind: "ok", response: res }
   const body = await res.text()
+  // The daily-budget error carries the `ExceededBudget` marker in its detail
+  // (400 application/json since 2026-10-07, previously a 429 marker). It must
+  // win over the generic error fallthrough on any status, and over context
+  // overflow — a budget body never names a context limit.
+  if (body.includes("ExceededBudget")) {
+    const m = BUDGET_RE.exec(body)
+    return { kind: "budget_exhausted", status: res.status, body, spend: m?.[1] ? Number(m[1]) : undefined, limit: m?.[2] ? Number(m[2]) : undefined }
+  }
   if (res.status === 429) return { kind: "rate_limited", status: 429, body }
   if (res.status === 401 || res.status === 403) return { kind: "auth_invalid", status: res.status, body }
   if ((res.status === 400 || res.status === 413) && CONTEXT_RE.test(body)) return { kind: "context_overflow", status: res.status, body }

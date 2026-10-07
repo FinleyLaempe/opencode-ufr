@@ -11,6 +11,9 @@ export type KeySnapshot = {
   blockedForMs: number
   /** Why the key is blocked right now: a daily-budget 429 or a bucket 429; null when usable. */
   blockedBy: "budget" | "rate" | null
+  /** Parsed from UFR's budget body, only while budget-blocked and only when UFR named the numbers. */
+  budgetSpend?: number
+  budgetLimit?: number
   invalid: boolean
 }
 
@@ -23,6 +26,9 @@ type Slot = KeyInfo & {
   blockedUntil: number
   /** What blocked the key: a daily-budget 429 or a bucket 429 (null until one fires). */
   blockedBy: "budget" | "rate" | null
+  /** Spend/limit parsed from the last budget error, for the display; cleared with the block. */
+  budgetSpend?: number
+  budgetLimit?: number
   /** Until when the key is considered invalid (0 = valid); a transient 401 expires. */
   invalidUntil: number
   recent429: { at: number; model: string }[]
@@ -115,14 +121,16 @@ export class KeyPool {
   }
 
   /**
-   * UFR's daily-budget 429 (the `budget_exceeded` marker) means this key's $ cap
-   * is spent for the day: block it until the next local midnight — UFR's own
-   * reset time is unknown, and midnight is the same assumption the spend-today
-   * stats already make. A bucket 429 carries the identical body (2026-10-07), so
-   * a merely rate-limited key can end up budget-blocked; that only costs until
-   * midnight and is safe. Never shortens an existing block.
+   * UFR's daily-budget error (the `budget_exceeded` marker 429, or the 400
+   * `ExceededBudget` body since 2026-10-07) means this key's $ cap is spent for
+   * the day: block it until the next local midnight — UFR's own reset time is
+   * unknown, and midnight is the same assumption the spend-today stats already
+   * make. A bucket 429 carries the identical body (2026-10-07), so a merely
+   * rate-limited key can end up budget-blocked; that only costs until midnight
+   * and is safe. Never shortens an existing block. When UFR's body named the
+   * numbers, they are kept for the display — and expire with the block.
    */
-  onBudgetExhausted(alias: string): void {
+  onBudgetExhausted(alias: string, spend?: number, limit?: number): void {
     const s = this.find(alias)
     if (!s) return
     const now = this.o.now()
@@ -130,6 +138,8 @@ export class KeyPool {
     // lands in the future, so the block can never be already expired.
     s.blockedUntil = Math.max(s.blockedUntil, startOfLocalDay(now) + 24 * 3_600_000)
     s.blockedBy = "budget"
+    s.budgetSpend = spend
+    s.budgetLimit = limit
   }
 
   onInvalid(alias: string): void {
@@ -146,8 +156,12 @@ export class KeyPool {
       blockedForMs: Math.max(0, s.blockedUntil - now),
       // The cause is derived from the current time, not stored state: a block
       // whose deadline has passed reports as unblocked even if the slot still
-      // carries a stale blockedBy.
+      // carries a stale blockedBy. The parsed spend/limit are display values of
+      // the block — they must not outlive it either.
       blockedBy: s.blockedUntil > now ? s.blockedBy : null,
+      ...(s.blockedUntil > now && s.blockedBy === "budget" && s.budgetSpend !== undefined
+        ? { budgetSpend: s.budgetSpend, budgetLimit: s.budgetLimit }
+        : {}),
       invalid: s.invalidUntil > now,
     }))
   }

@@ -159,6 +159,30 @@ describe("Router, non-streaming", () => {
     expect(err.message).not.toContain("requests per")
   })
 
+  test("a budget-dead key is skipped: the healthy key answers and the dead one is marked with its spend", async () => {
+    const e = setup({ keys: ["key-a", "key-b"], ufr: { keys: ["key-a", "key-b"] } })
+    e.ufr.budgetDeadKeys.add("key-a")
+    const res = await e.chat({ model: GLM })
+    expect(res.status).toBe(200)
+    // key-a got the one budget call, key-b answered — no second call to key-a.
+    expect(e.ufr.calls.map((c) => c.key)).toEqual(["key-a", "key-b"])
+    expect(e.keys.snapshot()[0]).toMatchObject({ blockedBy: "budget", budgetSpend: 24.0425389, budgetLimit: 20.0 })
+  })
+
+  test("an all-keys-over-budget pool reports the parsed spend per key", async () => {
+    const e = setup({ keys: ["key-a", "key-b"], ufr: { keys: ["key-a", "key-b"] }, config: { limits: { keyMaxWaitS: 0 } } })
+    e.ufr.budgetDeadKeys.add("key-a")
+    e.ufr.budgetDeadKeys.add("key-b")
+    const res = await e.chat({ model: GLM })
+    expect(res.status).toBe(429)
+    const err = await errorOf(res)
+    expect(err.type).toBe("key_pool_exhausted")
+    expect(err.message).toContain("k1 $24.04")
+    expect(err.message).toContain("k2 $24.04")
+    expect(err.message).toContain("limit $20.00")
+    expect(err.message).not.toContain("requests per")
+  })
+
   test("a window-only exhaustion (no 429 at all) keeps the per-minute message", async () => {
     const e = setup({ keys: ["key-a"], config: { limits: { keyRpm: 1, keyMaxWaitS: 0 } } })
     await e.chat({ model: GLM }) // succeeds; the window is now full without any 429

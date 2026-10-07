@@ -38,6 +38,22 @@ describe("callUpstream", () => {
     expect((await call({ key: "wrong" })).kind).toBe("auth_invalid")
   })
 
+  test("a 400 ExceededBudget body is budget_exhausted with parsed spend and limit", async () => {
+    ufr.budgetDeadKeys.add("key-a")
+    const r = await call()
+    expect(r.kind).toBe("budget_exhausted")
+    if (r.kind === "budget_exhausted") {
+      expect(r.status).toBe(400)
+      expect(r.spend).toBe(24.0425389)
+      expect(r.limit).toBe(20.0)
+    }
+  })
+
+  test("a 400 without the budget marker stays a generic error", async () => {
+    ufr.errorModels.set("glm-5.2-llmlb", 400)
+    expect(await call()).toMatchObject({ kind: "error", status: 400 })
+  })
+
   test("a context-length 400 is context_overflow", async () => {
     ufr.contextLimitChars.set("glm-5.2-llmlb", 5)
     expect((await call()).kind).toBe("context_overflow")

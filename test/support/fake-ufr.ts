@@ -14,6 +14,10 @@ export const BUDGET_BODY = JSON.stringify(
   4,
 )
 
+/** UFR's real budget error (2026-10-07): 400 application/json with the parsed numbers in the detail. */
+export const EXCEEDED_BUDGET_BODY =
+  '{"detail":"ExceededBudget: End User=a70e838a-71a2-482e-a7c4-3e1fee7ad814 over budget. Spend=24.0425389, Budget=20.0"}'
+
 /** What UFR serves on every path when the caller is not on the VPN — with HTTP 200. */
 export const VPN_PAGE =
   '<!DOCTYPE html><html lang="de"><head><title>Zugriff eingeschränkt | VPN erforderlich | Open WebUI</title></head><body>VPN</body></html>'
@@ -23,11 +27,16 @@ export type FakeCall = { key: string; model: string; stream: boolean; body: Reco
 
 const text429 = () => new Response(BUDGET_BODY, { status: 429, headers: { "content-type": "text/plain; charset=utf-8" } })
 
+/** The real 2026-10-07 daily-budget error: 400 application/json, `detail` carries the marker and numbers. */
+const budget400 = () => new Response(EXCEEDED_BUDGET_BODY, { status: 400, headers: { "content-type": "application/json" } })
+
 /** A local stand-in for openwebui.uni-freiburg.de/api with UFR's measured behaviour. */
 export class FakeUfr {
   calls: FakeCall[] = []
   walled = new Set<string>()
   rateLimitedKeys = new Set<string>()
+  /** Keys over their daily budget: served the real 400 ExceededBudget body before any bucket check. */
+  budgetDeadKeys = new Set<string>()
   contextLimitChars = new Map<string, number>()
   reasoningOnly = new Set<string>()
   /** Models in this set answer normally on their first call, then are walled (429) on every call after. */
@@ -94,6 +103,7 @@ export class FakeUfr {
     })
 
     const walledNow = this.walled.has(call.model) || (this.wallAfterFirst.has(call.model) && priorCallsToModel >= 1)
+    if (this.budgetDeadKeys.has(key)) return budget400() // before the bucket check: a dead key stays dead
     if (this.rateLimitedKeys.has(key) || walledNow) return text429()
     const now = Date.now()
     const recent = (this.admissions.get(key) ?? []).filter((t) => t > now - this.o.windowMs)

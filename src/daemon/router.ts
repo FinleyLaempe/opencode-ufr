@@ -247,6 +247,13 @@ export class Router {
         this.d.breakers.get(group).onRateLimited()
         this.record(t0, group, k.alias, 429, null, 1, "upstream_rate_limited", true)
         return new Response(r.body, { status: 429, headers: { "content-type": "application/json" } })
+      case "budget_exhausted":
+        // UFR named this key over budget (400 ExceededBudget, 2026-10-07): block
+        // it until midnight and hand the raw 400 back — the relay is a raw pipe.
+        this.d.keys.onBudgetExhausted(k.alias, r.spend, r.limit)
+        this.d.breakers.get(group).onOtherFailure()
+        this.record(t0, group, k.alias, r.status, null, 1, "upstream_budget_exhausted", true)
+        return new Response(r.body, { status: r.status, headers: { "content-type": "application/json" } })
       case "auth_invalid":
         this.d.keys.onInvalid(k.alias)
         this.d.breakers.get(group).onOtherFailure()
@@ -324,12 +331,20 @@ export class Router {
           if (rateLimitedHere) giveUp(model) // the wall counts toward the breaker threshold even here
           // The two messages tell the user very different remedies: wait a minute
           // vs. wait for midnight. The pool alone cannot tell why a key is
-          // blocked, so read it off the snapshot's budget marker.
-          const budgeted = keys.snapshot().some((s) => s.blockedBy === "budget")
+          // blocked, so read it off the snapshot's budget marker. When UFR's
+          // budget bodies named the numbers, show per-key spend — the reset time
+          // is still unknown here (the probe, not the error body, knows it).
+          const blocked = keys.snapshot().filter((s) => s.blockedBy === "budget")
+          if (blocked.length > 0) {
+            const withSpend = blocked.filter((s) => s.budgetSpend !== undefined)
+            return fail(429, "key_pool_exhausted",
+              withSpend.length > 0
+                ? `UFR key(s) over budget: ${withSpend.map((s) => `${s.alias} $${s.budgetSpend!.toFixed(2)}`).join(", ")} (limit $${(withSpend[0]!.budgetLimit ?? 0).toFixed(2)}) — reset time unknown, probing`
+                : "a UFR key has exhausted its daily budget (resets at local midnight)",
+              k.retryAfterMs)
+          }
           return fail(429, "key_pool_exhausted",
-            budgeted
-              ? "a UFR key has exhausted its daily budget (resets at local midnight)"
-              : `every UFR key is at its limit of ${config.limits.keyRpm} requests per ${config.limits.keyWindowS} s`,
+            `every UFR key is at its limit of ${config.limits.keyRpm} requests per ${config.limits.keyWindowS} s`,
             k.retryAfterMs)
         }
         // all_tried: every usable key already failed on this model
@@ -403,6 +418,15 @@ export class Router {
               return fail(429, "upstream_rate_limited", `UFR rate-limited ${group} on every key and fallback tried`)
             }
           }
+          continue
+        case "budget_exhausted":
+          // A daily-budget error (400 ExceededBudget, 2026-10-07) is key-specific:
+          // do NOT giveUp(model) — the breaker must not wall a model every other
+          // key can still answer — and do not advance the model either: the next
+          // acquire picks an untried key, and once every key is budget-blocked
+          // acquire reports exhausted, which surfaces the budget message below.
+          breakers.get(model).onOtherFailure() // a budget 400 is no wall evidence
+          keys.onBudgetExhausted(k.alias, r.spend, r.limit)
           continue
         case "auth_invalid":
           keys.onInvalid(k.alias)

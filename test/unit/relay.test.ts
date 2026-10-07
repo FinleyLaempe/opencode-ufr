@@ -72,6 +72,16 @@ describe("handleRelay", () => {
     expect(env.keys.snapshot()[0]!.blockedForMs).toBeGreaterThan(0)
   })
 
+  test("a 400 ExceededBudget body budget-blocks the key and passes the 400 through", async () => {
+    const env = routerEnv({ keys: ["key-a"] })
+    env.ufr.budgetDeadKeys.add("key-a")
+    const res = await relay(env, { model: "nuextract3-llmlb" })
+    // The relay is a raw pipe: UFR's own 400 goes back untouched.
+    expect(res.status).toBe(400)
+    expect(await res.text()).toContain("ExceededBudget")
+    expect(env.keys.snapshot()[0]).toMatchObject({ blockedBy: "budget", budgetSpend: 24.0425389, budgetLimit: 20.0 })
+  })
+
   test("streaming is rejected", async () => {
     const env = routerEnv()
     const res = await relay(env, { model: "nuextract3-llmlb", stream: true })

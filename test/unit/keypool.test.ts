@@ -94,6 +94,31 @@ describe("KeyPool", () => {
     expect(p.snapshot()[0]!.blockedForMs).toBe(24 * 3_600_000)
   })
 
+  test("a budget block with parsed spend exposes it on the snapshot, only while blocked", () => {
+    const c = new FakeClock()
+    c.t = new Date(2026, 9, 7, 14, 30).getTime()
+    const p = mk(c, 1)
+    p.onBudgetExhausted("k1", 24.0425389, 20.0)
+    expect(p.snapshot()[0]).toMatchObject({ blockedBy: "budget", budgetSpend: 24.0425389, budgetLimit: 20.0 })
+    // Stale display values must not outlive the block (same rule as blockedBy).
+    const midnight = new Date(2026, 9, 8).getTime()
+    c.advance(midnight - c.t)
+    const s = p.snapshot()[0]!
+    expect(s.blockedBy).toBeNull()
+    expect(s.budgetSpend).toBeUndefined()
+    expect(s.budgetLimit).toBeUndefined()
+  })
+
+  test("a marker-based budget block without parsed spend exposes no spend", () => {
+    const c = new FakeClock()
+    const p = mk(c, 1)
+    p.onBudgetExhausted("k1")
+    const s = p.snapshot()[0]!
+    expect(s.blockedBy).toBe("budget")
+    expect(s.budgetSpend).toBeUndefined()
+    expect(s.budgetLimit).toBeUndefined()
+  })
+
   test("a later 429 neither shortens a budget block nor changes its cause", () => {
     const c = new FakeClock()
     c.t = new Date(2026, 9, 7, 10, 0).getTime()
