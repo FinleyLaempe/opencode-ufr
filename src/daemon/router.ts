@@ -238,8 +238,12 @@ export class Router {
         return Response.json(json)
       }
       case "rate_limited":
+        // Same body as a bucket 429 — the `budget_exceeded` marker is the only
+        // tell (text/plain, 2026-09-28); a merely rate-limited key that carries
+        // it is budget-blocked until midnight, which is safe.
+        if (r.body.includes("budget_exceeded")) this.d.keys.onBudgetExhausted(k.alias)
+        else this.d.keys.onRateLimited(k.alias, group)
         // A wall on the exact model the script asked for — honest breaker signal.
-        this.d.keys.onRateLimited(k.alias, group)
         this.d.breakers.get(group).onRateLimited()
         this.record(t0, group, k.alias, 429, null, 1, "upstream_rate_limited", true)
         return new Response(r.body, { status: 429, headers: { "content-type": "application/json" } })
@@ -318,8 +322,15 @@ export class Router {
         if (k.reason === "exhausted") {
           breakers.get(model).onOtherFailure() // model's probe (if any) got no outcome
           if (rateLimitedHere) giveUp(model) // the wall counts toward the breaker threshold even here
+          // The two messages tell the user very different remedies: wait a minute
+          // vs. wait for midnight. The pool alone cannot tell why a key is
+          // blocked, so read it off the snapshot's budget marker.
+          const budgeted = keys.snapshot().some((s) => s.blockedBy === "budget")
           return fail(429, "key_pool_exhausted",
-            `every UFR key is at its limit of ${config.limits.keyRpm} requests per ${config.limits.keyWindowS} s`, k.retryAfterMs)
+            budgeted
+              ? "a UFR key has exhausted its daily budget (resets at local midnight)"
+              : `every UFR key is at its limit of ${config.limits.keyRpm} requests per ${config.limits.keyWindowS} s`,
+            k.retryAfterMs)
         }
         // all_tried: every usable key already failed on this model
         if (rateLimitedHere) giveUp(model)
@@ -376,7 +387,12 @@ export class Router {
           this.d.onUpstream?.(true, "")
           return { ok: true, response: r.response, model, keyAlias: k.alias, attempts, upstreamAbort: upstreamAbort ?? undefined }
         case "rate_limited":
-          keys.onRateLimited(k.alias, model)
+          // UFR's daily-budget 429 and its bucket 429 share one body — the
+          // `budget_exceeded` marker is the only tell (text/plain, 2026-09-28).
+          // A bucket 429 carrying it budget-blocks a merely rate-limited key:
+          // acceptable, that clears at midnight too.
+          if (r.body.includes("budget_exceeded")) keys.onBudgetExhausted(k.alias)
+          else keys.onRateLimited(k.alias, model)
           rateLimitedHere = true
           if (tried.size >= Math.min(2, keys.size)) {
             giveUp(model)

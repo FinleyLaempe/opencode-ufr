@@ -1,9 +1,18 @@
+import { startOfLocalDay } from "../shared/time"
 import { SlidingWindow } from "./window"
 
 export type KeyInfo = { alias: string; secret: string }
 export type Acquired = { kind: "ok"; alias: string; secret: string; waitMs: number; at: number }
 export type NotAcquired = { kind: "none"; reason: "no_keys" | "all_tried" | "exhausted"; retryAfterMs: number }
-export type KeySnapshot = { alias: string; used: number; cap: number; blockedForMs: number; invalid: boolean }
+export type KeySnapshot = {
+  alias: string
+  used: number
+  cap: number
+  blockedForMs: number
+  /** Why the key is blocked right now: a daily-budget 429 or a bucket 429; null when usable. */
+  blockedBy: "budget" | "rate" | null
+  invalid: boolean
+}
 
 /** A 401 can be transient (portal hiccup, short-lived token rotation): the key
  *  is skipped for this long, then retried — instead of being dead until restart. */
@@ -12,6 +21,8 @@ export const INVALID_KEY_TTL_MS = 10 * 60_000
 type Slot = KeyInfo & {
   window: SlidingWindow
   blockedUntil: number
+  /** What blocked the key: a daily-budget 429 or a bucket 429 (null until one fires). */
+  blockedBy: "budget" | "rate" | null
   /** Until when the key is considered invalid (0 = valid); a transient 401 expires. */
   invalidUntil: number
   recent429: { at: number; model: string }[]
@@ -29,6 +40,7 @@ export class KeyPool {
       ...k,
       window: new SlidingWindow({ cap: o.cap, windowMs: o.windowMs, maxWaitMs: o.maxWaitMs, now: o.now }),
       blockedUntil: 0,
+      blockedBy: null,
       invalidUntil: 0,
       recent429: [],
     }))
@@ -92,8 +104,32 @@ export class KeyPool {
     const acrossModels = new Set(s.recent429.map((e) => e.model)).size >= 2
     if (usedHalf || acrossModels) {
       // UFR frees a slot at first admission + window; rejected calls do not count.
-      s.blockedUntil = Math.max(s.blockedUntil, (s.window.oldest() ?? now) + this.o.windowMs, now + 1_000)
+      const until = Math.max(s.blockedUntil, (s.window.oldest() ?? now) + this.o.windowMs, now + 1_000)
+      // Only the block that actually extends the deadline owns the cause: a rate
+      // block on top of a longer budget block must not relabel it "rate".
+      if (until > s.blockedUntil) {
+        s.blockedUntil = until
+        s.blockedBy = "rate"
+      }
     }
+  }
+
+  /**
+   * UFR's daily-budget 429 (the `budget_exceeded` marker) means this key's $ cap
+   * is spent for the day: block it until the next local midnight — UFR's own
+   * reset time is unknown, and midnight is the same assumption the spend-today
+   * stats already make. A bucket 429 carries the identical body (2026-10-07), so
+   * a merely rate-limited key can end up budget-blocked; that only costs until
+   * midnight and is safe. Never shortens an existing block.
+   */
+  onBudgetExhausted(alias: string): void {
+    const s = this.find(alias)
+    if (!s) return
+    const now = this.o.now()
+    // startOfLocalDay(now) at exactly midnight would be now itself — +24h always
+    // lands in the future, so the block can never be already expired.
+    s.blockedUntil = Math.max(s.blockedUntil, startOfLocalDay(now) + 24 * 3_600_000)
+    s.blockedBy = "budget"
   }
 
   onInvalid(alias: string): void {
@@ -108,6 +144,10 @@ export class KeyPool {
       used: s.window.inWindow(),
       cap: this.o.cap,
       blockedForMs: Math.max(0, s.blockedUntil - now),
+      // The cause is derived from the current time, not stored state: a block
+      // whose deadline has passed reports as unblocked even if the slot still
+      // carries a stale blockedBy.
+      blockedBy: s.blockedUntil > now ? s.blockedBy : null,
       invalid: s.invalidUntil > now,
     }))
   }

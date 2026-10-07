@@ -64,6 +64,14 @@ describe("handleRelay", () => {
     expect(env.ufr.calls).toHaveLength(1)
   })
 
+  test("a budget 429 budget-blocks the key for the relay route too", async () => {
+    const env = routerEnv({ keys: ["key-a"] })
+    env.ufr.rateLimitedKeys.add("key-a")
+    await relay(env, { model: "nuextract3-llmlb" })
+    expect(env.keys.snapshot()[0]).toMatchObject({ blockedBy: "budget" })
+    expect(env.keys.snapshot()[0]!.blockedForMs).toBeGreaterThan(0)
+  })
+
   test("streaming is rejected", async () => {
     const env = routerEnv()
     const res = await relay(env, { model: "nuextract3-llmlb", stream: true })

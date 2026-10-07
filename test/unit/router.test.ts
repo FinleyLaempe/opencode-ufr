@@ -13,6 +13,8 @@ afterEach(() => {
 const GLM = "glm-5.2-llmlb"
 const GEMMA = "gemma-4-31b-llmlb"
 const MISTRAL = "mistral-small-4-llmlb"
+/** The fake UFR only accepts the keys it was started with — keep pool and fake in sync. */
+const KEYS4 = ["key-a", "key-b", "key-c", "key-d"]
 
 describe("Router, non-streaming", () => {
   test("answers a request and records its cost", async () => {
@@ -64,7 +66,10 @@ describe("Router, non-streaming", () => {
   })
 
   test("never more than four upstream calls per client request", async () => {
-    const e = setup()
+    // Four keys: every 429 carries the budget marker (the fake's only 429 body),
+    // so each attempt budget-blocks its key until midnight — the attempt cap
+    // must be hit before the pool runs dry, which is what this test is about.
+    const e = setup({ keys: KEYS4, ufr: { keys: KEYS4 } })
     for (const m of [GLM, GEMMA, MISTRAL]) e.ufr.walled.add(m)
     const res = await e.chat({ model: GLM })
     expect(res.status).toBe(429)
@@ -73,7 +78,11 @@ describe("Router, non-streaming", () => {
   })
 
   test("the breaker opens after three walled client requests, then UFR is left alone", async () => {
-    const e = setup()
+    // Twelve keys: every 429 budget-blocks its key (the fake's only 429 body),
+    // and each walled request burns up to maxUpstreamAttempts keys — the pool
+    // must outlast the three requests the breaker threshold counts.
+    const keys = Array.from({ length: 12 }, (_, i) => `key-${i + 1}`)
+    const e = setup({ keys, ufr: { keys } })
     e.ufr.walled.add(MISTRAL)
     for (let i = 0; i < 3; i++) expect((await e.chat({ model: MISTRAL })).status).toBe(429)
     const before = e.ufr.calls.length
@@ -129,6 +138,35 @@ describe("Router, non-streaming", () => {
     expect(res.status).toBe(429)
     expect((await errorOf(res)).type).toBe("key_pool_exhausted")
     expect(res.headers.get("retry-after")).toBe("60")
+  })
+
+  test("a budget 429 budget-blocks the key instead of only rate-limiting it", async () => {
+    const e = setup()
+    e.ufr.rateLimitedKeys.add("key-a")
+    await e.chat({ model: GLM })
+    expect(e.keys.snapshot()[0]).toMatchObject({ blockedBy: "budget" })
+    expect(e.keys.snapshot()[0]!.blockedForMs).toBeGreaterThan(0)
+  })
+
+  test("a budget-blocked-only pool surfaces the daily-budget message, not the per-minute one", async () => {
+    const e = setup({ keys: ["key-a"], config: { limits: { keyRpm: 1, keyMaxWaitS: 0 } } })
+    e.ufr.rateLimitedKeys.add("key-a")
+    const res = await e.chat({ model: GLM })
+    expect(res.status).toBe(429)
+    const err = await errorOf(res)
+    expect(err.type).toBe("key_pool_exhausted")
+    expect(err.message).toContain("daily budget")
+    expect(err.message).not.toContain("requests per")
+  })
+
+  test("a window-only exhaustion (no 429 at all) keeps the per-minute message", async () => {
+    const e = setup({ keys: ["key-a"], config: { limits: { keyRpm: 1, keyMaxWaitS: 0 } } })
+    await e.chat({ model: GLM }) // succeeds; the window is now full without any 429
+    const res = await e.chat({ model: GLM })
+    expect(res.status).toBe(429)
+    const err = await errorOf(res)
+    expect(err.type).toBe("key_pool_exhausted")
+    expect(err.message).toContain("requests per 60 s")
   })
 
   test("an invalid key is marked and the next key is used", async () => {
@@ -278,7 +316,9 @@ describe("Router, non-streaming", () => {
   })
 
   test("at the attempt cap the failure is recorded under the last model called", async () => {
-    const e = setup()
+    // Four keys — the attempt cap, not a drained pool, must end this request
+    // (each walled 429 budget-blocks its key; see "never more than four").
+    const e = setup({ keys: KEYS4, ufr: { keys: KEYS4 } })
     for (const m of [GLM, GEMMA, MISTRAL]) e.ufr.walled.add(m)
     const res = await e.chat({ model: GLM })
     expect(res.status).toBe(429)

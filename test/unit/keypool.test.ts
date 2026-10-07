@@ -71,6 +71,57 @@ describe("KeyPool", () => {
     expect(p.snapshot()[0]!.blockedForMs).toBe(60_000)
   })
 
+  test("a budget block lasts until the next local midnight, then the key is usable again", () => {
+    const c = new FakeClock()
+    c.t = new Date(2026, 9, 7, 14, 30).getTime() // mid-day local
+    const p = mk(c, 1)
+    p.onBudgetExhausted("k1")
+    const midnight = new Date(2026, 9, 8).getTime()
+    expect(p.snapshot()[0]!.blockedForMs).toBe(midnight - c.t)
+    expect(p.snapshot()[0]!.blockedBy).toBe("budget")
+    expect(alias(p.acquire())).toBe("none:exhausted")
+    c.advance(midnight - c.t)
+    expect(p.snapshot()[0]!.blockedForMs).toBe(0)
+    expect(p.snapshot()[0]!.blockedBy).toBeNull()
+    expect(alias(p.acquire())).toBe("k1")
+  })
+
+  test("a budget block set exactly at midnight runs to the following midnight", () => {
+    const c = new FakeClock()
+    c.t = new Date(2026, 9, 8).getTime() // local midnight
+    const p = mk(c, 1)
+    p.onBudgetExhausted("k1")
+    expect(p.snapshot()[0]!.blockedForMs).toBe(24 * 3_600_000)
+  })
+
+  test("a later 429 neither shortens a budget block nor changes its cause", () => {
+    const c = new FakeClock()
+    c.t = new Date(2026, 9, 7, 10, 0).getTime()
+    const p = mk(c, 1, 4)
+    p.acquire()
+    p.acquire() // half the cap used, so a 429 would block for a window
+    p.onBudgetExhausted("k1")
+    const blockedForMs = p.snapshot()[0]!.blockedForMs
+    p.onRateLimited("k1", "glm-5.2-llmlb")
+    p.onRateLimited("k1", "gemma-4-31b-llmlb")
+    expect(p.snapshot()[0]!.blockedForMs).toBe(blockedForMs)
+    expect(p.snapshot()[0]!.blockedBy).toBe("budget")
+  })
+
+  test("blockedBy reports the blocking cause and clears when the block passes", () => {
+    const c = new FakeClock()
+    const p = mk(c, 1, 4)
+    expect(p.snapshot()[0]!.blockedBy).toBeNull()
+    p.acquire()
+    p.acquire()
+    p.onRateLimited("k1", "glm-5.2-llmlb")
+    expect(p.snapshot()[0]!.blockedBy).toBe("rate")
+    expect(p.snapshot()[0]!.blockedForMs).toBeGreaterThan(0)
+    c.advance(60_000)
+    expect(p.snapshot()[0]!.blockedForMs).toBe(0)
+    expect(p.snapshot()[0]!.blockedBy).toBeNull()
+  })
+
   test("invalid keys are skipped; no valid key at all means no_keys", () => {
     const c = new FakeClock()
     const p = mk(c, 2)
