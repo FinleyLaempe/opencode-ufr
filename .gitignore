@@ -6,6 +6,7 @@ overrides.live.toml
 __pycache__/
 .superpowers/
 docs/superpowers/
+.worktrees/
 .claude/
 .codegraph/
 .codex/
