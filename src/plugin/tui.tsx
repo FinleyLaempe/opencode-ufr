@@ -3,13 +3,14 @@
  * opencode's CLI because package.json exports "./tui" — the server plugin
  * (index.ts) needs no changes for this to load.
  *
- * Polls GET /v1/_status every second and appends one line to the right
- * panel: req/s and tok/s over the gateway's rolling 60 s window. Status
- * polls don't reset the daemon's idle timer (see server.ts), so leaving the
- * panel open never keeps the gateway alive.
+ * Polls GET /v1/_status every second and appends lines to the right panel:
+ * one compact line per pool key (alias, $ spent today, request cap, why it is
+ * blocked) above the req/s and tok/s line over the gateway's rolling 60 s
+ * window. Status polls don't reset the daemon's idle timer (see server.ts),
+ * so leaving the panel open never keeps the gateway alive.
  */
 import { Plugin } from "@opencode/plugin/tui"
-import { createSignal, onCleanup, onMount, Show } from "solid-js"
+import { For, Show, createSignal, onCleanup, onMount } from "solid-js"
 import { daemonRequest } from "../shared/daemon-client"
 import { resolvePaths, type Paths } from "../shared/paths"
 
@@ -22,6 +23,24 @@ type Rates = {
   tokensOutPerSec: number
 }
 
+/** Per-key line of GET /v1/_status (KeySnapshot in keypool.ts). */
+type KeyStatus = {
+  alias: string
+  used: number
+  cap: number
+  blockedForMs: number
+  blockedBy: "budget" | "rate" | null
+  invalid: boolean
+}
+
+/** GET /v1/_status — only the fields the sidebar consumes. */
+type Status = {
+  rates?: Rates
+  keys?: KeyStatus[]
+  spendToday?: Record<string, number>
+  dailyBudgetUsd?: number
+}
+
 const POLL_MS = 1_000
 
 /** 6743 → "6.7k" — prompt traffic through opencode dwarfs output. */
@@ -29,8 +48,29 @@ function fmtTokens(v: number): string {
   return v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)
 }
 
+/** 0.4166 → "$0.42" — money is always shown with 2 decimals. */
+function fmtMoney(v: number): string {
+  return `$${v.toFixed(2)}`
+}
+
+/**
+ * One compact line per pool key: `k1 $0.42/20`, with the reason appended when
+ * the key is unusable — `budget` (daily cap hit, resets at local midnight),
+ * `rate` (bucket 429 cool-down) or `invalid` (transient 401). A key with no
+ * entry in spendToday renders as $0.00; healthy keys render too, the user
+ * asked to see every key.
+ */
+function keyLine(k: KeyStatus, s: Status): string {
+  const spend = s.spendToday?.[k.alias] ?? 0
+  let line = `${k.alias} ${fmtMoney(spend)}/${k.cap}`
+  if (k.invalid) line += " invalid"
+  else if (k.blockedBy === "budget") line += " budget"
+  else if (k.blockedBy === "rate" && k.blockedForMs > 0) line += " rate"
+  return line
+}
+
 function RatesLine(props: { paths: Paths }) {
-  const [rates, setRates] = createSignal<Rates | null>(null)
+  const [status, setStatus] = createSignal<Status | null>(null)
   let busy = false
   const poll = async () => {
     if (busy) return
@@ -38,11 +78,10 @@ function RatesLine(props: { paths: Paths }) {
     try {
       const res = await daemonRequest(props.paths, (u, i) => fetch(u, i), "/v1/_status")
       if (!res?.ok) {
-        setRates(null) // daemon down, restarting or new token — the line hides
+        setStatus(null) // daemon down, restarting or new token — the lines hide
         return
       }
-      const j = (await res.json()) as { rates?: Rates }
-      setRates(j.rates ?? null)
+      setStatus((await res.json()) as Status)
     } finally {
       busy = false
     }
@@ -54,12 +93,13 @@ function RatesLine(props: { paths: Paths }) {
   })
   onCleanup(() => clearInterval(timer))
   const label = () => {
-    const r = rates()
+    const r = status()?.rates
     if (!r) return null
     return `UFR ${r.reqPerSec} req/s · ${fmtTokens(r.tokensOutPerSec)} tok/s out · ${fmtTokens(r.tokensInPerSec)} tok/s in`
   }
   return (
-    <Show when={label()}>
+    <Show when={status()}>
+      <For each={status()!.keys ?? []}>{(k) => <text>{keyLine(k, status()!)}</text>}</For>
       <text>{label()}</text>
     </Show>
   )
