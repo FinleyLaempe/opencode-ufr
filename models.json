@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-07",
+  "updated": "2026-11-02",
   "defaults": {
     "context": 131072,
     "max_output": 16384
@@ -257,6 +257,10 @@
     "kolibri-1-llmlb": {
       "context": 262144,
       "note": "context 262144 probed live 2026-10-05 (probe-all-contexts)"
+    },
+    "qwen-3.8-flash-next-llmlb": {
+      "context": 262144,
+      "note": "context 262144 probed live 2026-11-02 (probe-all-contexts)"
     }
   }
 }
