@@ -13,6 +13,25 @@ describe("costUsd", () => {
     expect(costUsd(GLM, 267_168, 60)!).toBeCloseTo(0.1069, 4)
   })
 
+  test("cache reads and writes are priced separately from plain input", () => {
+    // deepseek 2026-11-09: reads free, writes at the input price; 3.63M cached of 3.74M prompt
+    const DS = { input: 0.025, output: 0.025, cacheRead: 0, cacheWrite: 0.025 }
+    expect(costUsd(DS, 3_740_080, 200, 3_634_176, 93_184)!).toBeCloseTo((3_740_080 - 3_634_176) * 0.025e-6 + 200 * 0.025e-6, 9)
+    // OpenAI luna: write 1.25x input, read 0.1x
+    const LUNA = { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }
+    expect(costUsd(LUNA, 9633, 4, 0, 9630)!).toBeCloseTo((3 * 0.1 + 9630 * 0.125 + 4 * 0.5) / 1e6, 12)
+    expect(costUsd(LUNA, 9633, 4, 9630, 0)!).toBeCloseTo((3 * 0.1 + 9630 * 0.01 + 4 * 0.5) / 1e6, 12)
+  })
+
+  test("a catalog price without cache prices bills cached tokens as input", () => {
+    expect(costUsd(GLM, 1000, 0, 900, 0)!).toBeCloseTo(costUsd(GLM, 1000, 0)!, 12)
+  })
+
+  test("cached + written can never exceed the prompt", () => {
+    const P = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }
+    expect(costUsd(P, 100, 0, 80, 80)!).toBe(0)
+  })
+
   test("unknown price means unknown cost", () => {
     expect(costUsd(null, 10, 2)).toBeNull()
   })

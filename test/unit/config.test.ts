@@ -14,7 +14,7 @@ const tmp = async () => (dir = await mkdtemp(join(tmpdir(), "ufr-config-")))
 describe("config", () => {
   test("defaults match the spec", () => {
     expect(DEFAULTS.limits).toEqual({
-      keyRpm: 19, keyWindowS: 60, keyMaxWaitS: 60,
+      keyRpm: 0, keyWindowS: 60, keyMaxWaitS: 60,
       poolPerHour: 0, poolWindowS: 3600, poolMaxWaitS: 20, maxUpstreamAttempts: 4,
     })
     expect(DEFAULTS.breaker).toEqual({ tripThreshold: 3, ladderS: [30, 120, 300, 900, 1800, 3600], probeTimeoutS: 120 })
@@ -38,8 +38,17 @@ describe("config", () => {
     expect(c.keys).toEqual(["main"])
   })
 
+  test("the old default limiter (19/60 s/60 s) is migrated to off; a changed one is kept", () => {
+    const warnings: string[] = []
+    const old = mergeConfig({ limits: { keyRpm: 19, keyWindowS: 60, keyMaxWaitS: 60 } }, (m) => warnings.push(m))
+    expect(old.limits.keyRpm).toBe(0)
+    expect(warnings.join()).toMatch(/keyRpm/)
+    expect(mergeConfig({ limits: { keyRpm: 10 } }).limits.keyRpm).toBe(10)
+    expect(mergeConfig({ limits: { keyRpm: 19, keyWindowS: 30 } }).limits.keyRpm).toBe(19)
+  })
+
   test("invalid values name the offending path", () => {
-    expect(() => mergeConfig({ limits: { keyRpm: 0 } })).toThrow(/limits\.keyRpm/)
+    expect(() => mergeConfig({ limits: { keyRpm: -1 } })).toThrow(/limits\.keyRpm/)
     expect(() => mergeConfig({ port: 70000 })).toThrow(/port/)
     expect(() => mergeConfig({ keys: ["bad alias!"] })).toThrow(/keys/)
     expect(() => mergeConfig({ transport: { type: "socks5" } })).toThrow(/transport\.type/)

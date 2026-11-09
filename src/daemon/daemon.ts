@@ -312,9 +312,10 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       try {
         for (const id of unknown.slice(0, 2)) {
           if (stopping) break
-          // Probes share UFR's rate-limit bucket with real traffic: reserve a
-          // key slot per probe and keep the admission (the router keeps a
-          // completed call's too), so probes cannot oversubscribe the bucket.
+          // Probes go through the key pool like real traffic: reserve a key slot
+          // per probe and keep the admission (the router keeps a completed
+          // call's too). With the default keyRpm 0 this never waits; a
+          // configured keyRpm keeps probes from oversubscribing it.
           const reserved = keys.acquire()
           if (reserved.kind === "none") break // pool exhausted — the next refresh probes again
           if (reserved.waitMs > 0) await sleep(reserved.waitMs)

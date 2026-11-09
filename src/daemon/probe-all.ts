@@ -5,8 +5,7 @@
  *
  * Cost profile matters here: a REJECTED request is refused before any tokens
  * are priced (measured 2026-10-05: 740 ms, x-process-time 0), so probing a
- * model whose recorded context is still right costs nothing and does not
- * count against the 20/min key bucket. Money is only spent when a probe rung
+ * model whose recorded context is still right costs nothing. Money is only spent when a probe rung
  * is ACCEPTED (context grew since the last measurement) or a paid model is
  * probed on an accepted rung — which is why paid models are skipped unless
  * asked for.

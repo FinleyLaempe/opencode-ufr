@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import type { Transport } from "../../src/daemon/transport"
+import { usageOf } from "../../src/daemon/router"
 import { errorOf, routerEnv } from "../support/router-env"
 
 type Env = ReturnType<typeof routerEnv>
@@ -15,6 +16,20 @@ const GEMMA = "gemma-4-31b-llmlb"
 const MISTRAL = "mistral-small-4-llmlb"
 /** The fake UFR only accepts the keys it was started with — keep pool and fake in sync. */
 const KEYS4 = ["key-a", "key-b", "key-c", "key-d"]
+
+describe("usageOf", () => {
+  test("reads cached and cache-write tokens in the three spellings seen live", () => {
+    const u = (d: object) => usageOf({ usage: { prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: d } })
+    expect(u({ cached_tokens: 90 })).toEqual({ prompt: 100, completion: 5, cached: 90, written: 0 })
+    expect(u({ cache_write_tokens: 95, cache_creation_tokens: 95 })).toEqual({ prompt: 100, completion: 5, cached: 0, written: 95 }) // OpenAI
+    expect(u({ cached_tokens: 0, created_cache_tokens: 64 })).toEqual({ prompt: 100, completion: 5, cached: 0, written: 64 }) // deepseek
+  })
+
+  test("a usage without details (e.g. ufr/vision-complex) has no cache tokens", () => {
+    expect(usageOf({ usage: { prompt_tokens: 7, completion_tokens: 1 } })).toEqual({ prompt: 7, completion: 1, cached: 0, written: 0 })
+    expect(usageOf({})).toBeNull()
+  })
+})
 
 describe("Router, non-streaming", () => {
   test("answers a request and records its cost", async () => {
@@ -127,6 +142,13 @@ describe("Router, non-streaming", () => {
     expect(res.status).toBe(499)
     expect(e.ufr.calls).toHaveLength(1)
     expect(e.pool.inWindow()).toBe(1)
+  })
+
+  test("by default no per-key limit applies: a burst is never queued", async () => {
+    const e = setup({ keys: ["key-a"] })
+    for (let i = 0; i < 40; i++) expect((await e.chat({ model: GLM })).status).toBe(200)
+    expect(e.sleeps).toEqual([])
+    expect(e.ufr.calls).toHaveLength(40)
   })
 
   test("with every key at its limit, a request waits up to keyMaxWait", async () => {

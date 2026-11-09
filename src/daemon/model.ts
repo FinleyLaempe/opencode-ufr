@@ -1,4 +1,4 @@
-/** USD per 1M tokens. UFR bills prefix-cached input in full (measured 2026-09-28). */
+/** USD per 1M tokens. cacheRead/cacheWrite default to the input price; cached reads are free on glm/deepseek (measured 2026-11-09). */
 export type ModelPrice = { input: number; output: number; cacheRead: number; cacheWrite: number }
 
 export type Model = {

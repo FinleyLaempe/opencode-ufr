@@ -22,6 +22,7 @@ export const EXCEEDED_BUDGET_BODY =
 export const VPN_PAGE =
   '<!DOCTYPE html><html lang="de"><head><title>Zugriff eingeschränkt | VPN erforderlich | Open WebUI</title></head><body>VPN</body></html>'
 
+/** bucket: requests per key per windowMs before a 429; 0 (default) = unlimited. */
 export type FakeUfrOptions = { keys?: string[]; bucket?: number; windowMs?: number; models?: unknown[] }
 export type FakeCall = { key: string; model: string; stream: boolean; body: Record<string, any>; at: number; aborted: boolean }
 
@@ -39,6 +40,8 @@ export class FakeUfr {
   budgetDeadKeys = new Set<string>()
   contextLimitChars = new Map<string, number>()
   reasoningOnly = new Set<string>()
+  /** When > 0, usage reports this many prompt tokens as cached (prompt_tokens_details.cached_tokens), as UFR does since 2026-11-09. */
+  cachedTokens = 0
   /** Models in this set answer normally on their first call, then are walled (429) on every call after. */
   wallAfterFirst = new Set<string>()
   errorModels = new Map<string, number>()
@@ -60,7 +63,7 @@ export class FakeUfr {
   static start(o: FakeUfrOptions = {}): FakeUfr {
     const f = new FakeUfr({
       keys: o.keys ?? ["key-a", "key-b", "key-c"],
-      bucket: o.bucket ?? 20,
+      bucket: o.bucket ?? 0, // 0 = no per-key bucket: UFR stopped enforcing 20/min (2026-11-09); pass a number to test throttling
       windowMs: o.windowMs ?? 60_000,
       models: o.models ?? UFR_RAW_MODELS,
     })
@@ -107,7 +110,7 @@ export class FakeUfr {
     if (this.rateLimitedKeys.has(key) || walledNow) return text429()
     const now = Date.now()
     const recent = (this.admissions.get(key) ?? []).filter((t) => t > now - this.o.windowMs)
-    if (recent.length >= this.o.bucket) {
+    if (this.o.bucket > 0 && recent.length >= this.o.bucket) {
       this.admissions.set(key, recent) // rejected requests do not count
       return text429()
     }
@@ -126,7 +129,10 @@ export class FakeUfr {
     if (this.delayMs) await Bun.sleep(this.delayMs)
 
     const starved = this.reasoningOnly.has(call.model) && body.reasoning_effort !== "none"
-    const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }
+    const usage = {
+      prompt_tokens: 10, completion_tokens: 2, total_tokens: 12,
+      ...(this.cachedTokens > 0 ? { prompt_tokens_details: { cached_tokens: this.cachedTokens, cache_write_tokens: 0 } } : {}),
+    }
     if (!call.stream) {
       return Response.json({
         id: "chatcmpl-fake",

@@ -33,7 +33,7 @@ export const DEFAULTS: Config = {
   upstream: { baseUrl: "https://openwebui.uni-freiburg.de/api", requestTimeoutS: 600 },
   keys: [],
   limits: {
-    keyRpm: 19,
+    keyRpm: 0, // 0 = per-key limiter off: no queueing, no waiting. UFR no longer enforces a 20/min bucket (measured 2026-11-09); real 429s still cool the key down. Set a number to re-enable.
     keyWindowS: 60,
     keyMaxWaitS: 60,
     poolPerHour: 0, // 0 = pool limiter off. The old ~900/h model-group wall is gone (verified 2026-10-06); set a number to re-enable.
@@ -79,7 +79,7 @@ const RULES: Record<string, Rule> = {
   "upstream.baseUrl": "str",
   "upstream.requestTimeoutS": "int>=1",
   keys: "aliases",
-  "limits.keyRpm": "int>=1",
+  "limits.keyRpm": "int>=0",
   "limits.keyWindowS": "int>=1",
   "limits.keyMaxWaitS": "int>=0",
   "limits.poolPerHour": "int>=0",
@@ -159,6 +159,15 @@ export function mergeConfig(raw: unknown, warn?: (msg: string) => void): Config 
     if (get(cfg, key) === undefined) continue
     deleteKey(cfg as unknown as Record<string, unknown>, key)
     warn?.(`config: dropping removed key "${key}" — ${why}`)
+  }
+  // Old versions saved their default per-key limiter (19 requests / 60 s, wait up to
+  // 60 s) into every config.json, so changing the default would never reach an
+  // existing install. UFR stopped enforcing that bucket (2026-11-09): migrate the
+  // untouched old defaults to "off"; any value the user changed is left alone.
+  const lim = cfg.limits as Partial<Config["limits"]> | null | undefined
+  if (lim && (lim.keyRpm === 19 || lim.keyRpm === 18) && lim.keyWindowS === 60 && lim.keyMaxWaitS === 60) {
+    lim.keyRpm = 0
+    warn?.("config: limits.keyRpm 19 was the old default and is now 0 (no per-key throttling) — UFR no longer enforces the 20/min bucket")
   }
   // Type validation first: a present-but-mistyped section (e.g. "limits": null)
   // must be reported as a type error, not as an unknown key.

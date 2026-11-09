@@ -15,6 +15,6 @@ describe("the committed models.json", () => {
 
   test("the glm models carry the measured price", () => {
     expect(file.models["glm-5.2-llmlb"]?.price).toMatchObject({ input: 0.4, output: 0.4 })
-    expect(file.models["glm-5.3-flash-llmlb"]?.price).toMatchObject({ input: 0.4, output: 0.4 })
+    expect(file.models["glm-5.3-flash-llmlb"]?.price).toMatchObject({ input: 0.1, output: 0.1 })
   })
 })

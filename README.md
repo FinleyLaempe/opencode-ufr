@@ -119,11 +119,12 @@ old fixed pause between probe calls is gone, the key pool paces instead.
 
 ## What the gateway does
 
-- Keeps the key under 19 of UFR's 20 requests-per-rolling-minute, waiting
-  instead of failing when it is close to its limit.
+- Does not throttle requests by default: UFR no longer enforces the old 20
+  requests-per-minute per-key bucket (measured 2026-11-09), so
+  `limits.keyRpm` is 0 (= off). Set a number to wait for a free slot per key
+  again. A real 429 from UFR still puts that key on cooldown.
 - Can enforce a pool-wide cap on requests/hour across all models (off by
-  default; `limits.poolPerHour`) — the old ~900/h model-group wall is gone,
-  so nothing throttles beyond the per-key bucket unless you set a cap.
+  default; `limits.poolPerHour`) — the old ~900/h model-group wall is gone.
 - Runs a circuit breaker per model: after repeated failures it backs off from
   30 s up to 60 minutes before probing again, instead of hammering a walled
   model.
@@ -167,7 +168,7 @@ except `port`, which is written on first start):
   "upstream": { "baseUrl": "https://openwebui.uni-freiburg.de/api", "requestTimeoutS": 600 },
   "keys": [],
   "limits": {
-    "keyRpm": 19,
+    "keyRpm": 0,
     "keyWindowS": 60,
     "poolPerHour": 0,
     "poolWindowS": 3600,

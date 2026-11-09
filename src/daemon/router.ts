@@ -24,19 +24,42 @@ export type RouterDeps = {
   onUpstream?: (ok: boolean, message: string) => void
 }
 
-type Usage = { prompt: number; completion: number }
+/** prompt includes cached and written; completion includes reasoning tokens. */
+type Usage = { prompt: number; completion: number; cached: number; written: number }
 type LoopOk = { ok: true; response: Response; model: string; keyAlias: string; attempts: number; upstreamAbort?: AbortController }
 type LoopFail = { ok: false; response: Response; model: string; keyAlias: string | null; attempts: number; errorType: string }
 
+/** Why no key is usable right now: the soft limiter if one is configured, otherwise UFR's own 429 cooldown. */
+function keyLimitText(l: { keyRpm: number; keyWindowS: number }): string {
+  return l.keyRpm > 0
+    ? `every UFR key is at its limit of ${l.keyRpm} requests per ${l.keyWindowS} s`
+    : "every UFR key is cooling down after a UFR rate-limit answer"
+}
+
+type RawUsage = {
+  prompt_tokens?: number
+  completion_tokens?: number
+  // cached_tokens: glm, deepseek and OpenAI (2026-11-09). Cache writes are named
+  // cache_write_tokens (OpenAI) or created_cache_tokens (deepseek) — both seen live.
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number; created_cache_tokens?: number } | null
+}
+
 export function usageOf(json: unknown): Usage | null {
-  const u = (json as { usage?: { prompt_tokens?: number; completion_tokens?: number } } | null)?.usage
-  return u ? { prompt: u.prompt_tokens ?? 0, completion: u.completion_tokens ?? 0 } : null
+  const u = (json as { usage?: RawUsage } | null)?.usage
+  if (!u) return null
+  const d = u.prompt_tokens_details ?? {}
+  return {
+    prompt: u.prompt_tokens ?? 0,
+    completion: u.completion_tokens ?? 0,
+    cached: d.cached_tokens ?? 0,
+    written: d.cache_write_tokens ?? d.created_cache_tokens ?? 0,
+  }
 }
 
 function addUsage(a: Usage | null, b: Usage | null): Usage | null {
   if (!a) return b
   if (!b) return a
-  return { prompt: a.prompt + b.prompt, completion: a.completion + b.completion }
+  return { prompt: a.prompt + b.prompt, completion: a.completion + b.completion, cached: a.cached + b.cached, written: a.written + b.written }
 }
 
 /** Sums two per-call costs; null only when neither call's model had a known price. */
@@ -217,7 +240,7 @@ export class Router {
       // exhausted or all_tried (relay excludes nothing, so all_tried cannot happen — belt and braces)
       return this.fail(t0, group, null, 0, true, "key_pool_exhausted",
         errorResponse(429, "key_pool_exhausted",
-          `every UFR key is at its limit of ${this.d.config.limits.keyRpm} requests per ${this.d.config.limits.keyWindowS} s`, k.retryAfterMs))
+          keyLimitText(this.d.config.limits), k.retryAfterMs))
     }
     if (k.waitMs > 0) {
       try {
@@ -373,7 +396,7 @@ export class Router {
               k.retryAfterMs)
           }
           return fail(429, "key_pool_exhausted",
-            `every UFR key is at its limit of ${config.limits.keyRpm} requests per ${config.limits.keyWindowS} s`,
+            keyLimitText(config.limits),
             k.retryAfterMs)
         }
         // all_tried: every usable key already failed on this model
@@ -521,7 +544,7 @@ export class Router {
         errorResponse(502, "upstream_bad_json", "UFR answered 200 with a body that is not valid JSON"))
     }
     let usage = usageOf(json)
-    let cost = usage ? costUsd(this.priceOf(res.model), usage.prompt, usage.completion) : null
+    let cost = usage ? costUsd(this.priceOf(res.model), usage.prompt, usage.completion, usage.cached, usage.written) : null
     let attempts = res.attempts
     let model = res.model
     let keyAlias = res.keyAlias
@@ -550,7 +573,7 @@ export class Router {
             const u2 = usageOf(again)
             // Price each call at the model it was actually answered by — a retry that
             // falls back must not price the first call at the fallback's rate.
-            cost = addCost(cost, u2 ? costUsd(this.priceOf(retry.model), u2.prompt, u2.completion) : null)
+            cost = addCost(cost, u2 ? costUsd(this.priceOf(retry.model), u2.prompt, u2.completion, u2.cached, u2.written) : null)
             usage = addUsage(usage, u2)
             if (!isReasoningStarved(again)) {
               json = again
@@ -646,7 +669,7 @@ export class Router {
    *  otherwise cost is derived from `model`'s price, as for every other single-call outcome. */
   private record(ts: number, model: string, keyAlias: string | null, status: number, usage: Usage | null,
     attempts: number, errorType: string | null, poolAdmitted: boolean, costOverride?: number | null): void {
-    const cost = costOverride !== undefined ? costOverride : (usage ? costUsd(this.priceOf(model), usage.prompt, usage.completion) : null)
+    const cost = costOverride !== undefined ? costOverride : (usage ? costUsd(this.priceOf(model), usage.prompt, usage.completion, usage.cached, usage.written) : null)
     this.d.meter?.add({ requests: 1, tokensIn: usage?.prompt ?? 0, tokensOut: usage?.completion ?? 0 })
     this.d.stats.record({
       ts,

@@ -13,7 +13,7 @@ import { TEST_MODELS_FILE, UFR_RAW_MODELS } from "./models"
 
 /** A Router wired to a fake UFR and a fake clock; sleeps advance the clock instantly. */
 export function routerEnv(o: { keys?: string[]; config?: Record<string, unknown>; ufr?: FakeUfrOptions; transport?: Transport } = {}) {
-  const ufr = FakeUfr.start({ bucket: 1_000, ...o.ufr })
+  const ufr = FakeUfr.start({ ...o.ufr })
   const clock = new FakeClock(Date.now())
   const config: Config = mergeConfig({ ...o.config, upstream: { baseUrl: ufr.baseUrl, requestTimeoutS: 10 } })
   const keys = new KeyPool(

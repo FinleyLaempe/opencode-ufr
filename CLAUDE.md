@@ -42,13 +42,14 @@ use it for every manual experiment so a real install is never touched.
 
 | fact | measured |
 |---|---|
-| per-key bucket: **20 requests per rolling 60 s**, across all models; frees at first admission + 60 s; rejected requests do not count | 2026-09-28 (was 60 on 2026-08-24) |
+| per-key bucket: **no longer measurable at the 20/min level** — paced traffic (5 req/s, 80 requests in 20 s) and bursts of 80 never got a 429 on glm-5.3-flash / deepseek-v4.1-flash; only a 250-parallel burst on glm got 429s ("Current limit: 20", `Retry-After: 60`) next to backend pool errors (400/500) | 2026-11-09 (one key; was 20 per rolling 60 s on 2026-09-28) |
 | one API key per UFR account → more throughput needs more accounts | 2026-09-28 |
-| every 429 (bucket, model wall, daily $ cap) is the same `budget_exceeded` body, `Content-Type: text/plain`, **no `Retry-After`** | 2026-09-28 |
-| sustained wall above ~900 req/h pooled, per model group, recovery unclear | 2026-09-21 (n = 2) |
+| every 429 seen so far: bucket, model wall and daily $ cap share the `budget_exceeded` body, `Content-Type: text/plain`, **no `Retry-After`** (2026-09-28); the glm burst 429 of 2026-11-09 was JSON (`type: throttling_error`, "Limit resets at …") **with** `Retry-After: 60` | 2026-09-28 / 2026-11-09 |
+| cached prompt tokens: `usage.prompt_tokens_details.cached_tokens` is reported by glm-5.3-flash, deepseek-v4.1-flash and the OpenAI models; cached reads are **free** on glm and deepseek (portal), OpenAI cache write luna = $0.125/Mtok (declared price confirmed); deepseek bills uncached input = cache writes at $0.025/Mtok, glm $0.10/Mtok | 2026-11-09 |
+| the ~900 req/h pooled model-group wall is gone (README: verified 2026-10-06); not re-tested at higher volume | 2026-10-06 |
 | **off the VPN every path answers `HTTP 200` + HTML "VPN erforderlich"** | 2026-09-28 |
-| glm-5.2 / glm-5.3-flash: input, output (incl. reasoning) and prefix-cached input all $0.40/Mtok — no cache discount | 2026-09-28, portal |
-| no `cached_tokens`, no cost or rate-limit headers; streams send a `usage` chunk when `stream_options.include_usage` is set | 2026-09-28 |
+| glm-5.3-flash: input and output (incl. reasoning) $0.10/Mtok, cached reads free (portal-measured; was $0.40 on 2026-09-28, then with no cache discount); glm-5.2 still $0.40, not re-measured | 2026-11-09, portal |
+| no cost or rate-limit headers; streams send a `usage` chunk when `stream_options.include_usage` is set (`cached_tokens` now present, see above) | 2026-11-09 |
 | portal shows spend only as % of $20/day per key, two decimals | 2026-09-28 |
 | UFR's server clock runs ~70 s fast | 2026-09-28 |
 | context probe: one oversized request is refused **before pricing** (740 ms, x-process-time 0) and names the exact limit — rejected probes are free and don't consume the key bucket | 2026-10-05 |

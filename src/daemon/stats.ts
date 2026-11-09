@@ -27,10 +27,20 @@ export type SummaryRow = {
   unpriced: number
 }
 
-/** Prompt tokens are all billed at the input price — UFR has no cache discount. */
-export function costUsd(price: ModelPrice | null, promptTokens: number, completionTokens: number): number | null {
+/**
+ * Prompt tokens split into cache reads (`cached`, at cacheRead), cache writes
+ * (`written`, at cacheWrite) and the rest (at input); completion tokens
+ * (reasoning included) at output. cacheRead/cacheWrite default to the input
+ * price in the catalog, so a model without cache prices bills as before.
+ */
+export function costUsd(
+  price: ModelPrice | null, promptTokens: number, completionTokens: number, cached = 0, written = 0,
+): number | null {
   if (!price) return null
-  return (promptTokens * price.input + completionTokens * price.output) / 1_000_000
+  const c = Math.min(Math.max(0, cached), promptTokens)
+  const w = Math.min(Math.max(0, written), promptTokens - c)
+  const plain = promptTokens - c - w
+  return (plain * price.input + c * price.cacheRead + w * price.cacheWrite + completionTokens * price.output) / 1_000_000
 }
 
 export class Stats {
