@@ -66,6 +66,25 @@ describe("callUpstream", () => {
     if (r.kind === "unreachable") expect(r.message).toContain("VPN")
   })
 
+  test("an HTML 413 from UFR's proxy is a request error, not unreachable — so clients do not retry it", async () => {
+    const nginx413: Transport = {
+      name: "nginx413",
+      fetch: async () => new Response("<html><head><title>413 Request Entity Too Large</title></head><body>nginx</body></html>", { status: 413, headers: { "content-type": "text/html" } }),
+    }
+    const r = await call({ transport: nginx413 })
+    expect(r.kind).toBe("error")
+    if (r.kind === "error") {
+      expect(r.status).toBe(413)
+      expect(r.contentType).toBe("application/json")
+      expect(JSON.parse(r.body).error.type).toBe("request_too_large")
+    }
+  })
+
+  test("an HTML 502 stays unreachable (transient — worth a retry)", async () => {
+    const bad: Transport = { name: "bad", fetch: async () => new Response("<html>502</html>", { status: 502, headers: { "content-type": "text/html" } }) }
+    expect((await call({ transport: bad })).kind).toBe("unreachable")
+  })
+
   test("a redirect is unreachable but not blamed on the VPN (ruling R12)", async () => {
     const redirecting: Transport = {
       name: "redirecting",
