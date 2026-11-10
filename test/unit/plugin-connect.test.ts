@@ -17,6 +17,11 @@ describe("credentialToInput", () => {
       .toEqual({ keys: "k1,k2, k3", login: "xx0000@uni-freiburg.de", password: "pw" })
   })
 
+  test("reads login/password from `metadata` — where opencode actually stores the form answers", () => {
+    expect(credentialToInput({ type: "key", key: "k1", metadata: { login: "xx0000@uni-freiburg.de", password: "pw" } }))
+      .toEqual({ keys: "k1", login: "xx0000@uni-freiburg.de", password: "pw" })
+  })
+
   test("falls back to a keys field in the configuration", () => {
     expect(credentialToInput({ type: "key", key: "", configuration: { keys: "a\nb" } }))
       .toEqual({ keys: "a\nb", login: undefined, password: undefined })
@@ -79,6 +84,15 @@ describe("registerConnect (the /connect integration)", () => {
     expect(await env.secrets.get("vpn-login")).toBe("xx0000@uni-freiburg.de")
     expect(await env.secrets.get("vpn-pass")).toBe("pw")
     expect((await loadConfig(env.paths.configFile)).keys).toEqual(["key1", "key2"])
+  })
+
+  test("a credential carrying the uni login in `metadata` stores login and password in the keyring", async () => {
+    env = await daemonEnv({ keys: {} })
+    const { ctx } = fakeCtx({ type: "key", key: "k1", metadata: { login: "xx0000@uni-freiburg.de", password: "pw" } })
+    const r = await registerConnect({ ctx, paths: env.paths, secrets: env.secrets, log: () => {} })
+    r.stop()
+    expect(await env.secrets.get("vpn-login")).toBe("xx0000@uni-freiburg.de")
+    expect(await env.secrets.get("vpn-pass")).toBe("pw")
   })
 
   test("the same credential is not applied twice; a changed one re-applies", async () => {

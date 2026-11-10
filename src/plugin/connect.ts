@@ -30,12 +30,15 @@ export type ConnectDeps = {
   pollMs?: number
 }
 
-type CredentialValue = { type?: string; key?: string; configuration?: Record<string, unknown> } | undefined
+/** opencode stores the form answers under `metadata` (seen 2026-11-10); `configuration` is kept for older versions. */
+type CredentialValue = { type?: string; key?: string; metadata?: Record<string, unknown>; configuration?: Record<string, unknown> } | undefined
+
+const formValues = (cred: CredentialValue): Record<string, unknown> => ({ ...(cred?.configuration ?? {}), ...(cred?.metadata ?? {}) })
 
 /** Normalizes one opencode credential into a ConnectInput. */
 export function credentialToInput(cred: CredentialValue): { keys: string; login?: string; password?: string } | null {
   if (!cred || cred.type && cred.type !== "key") return null
-  const cfg = (cred.configuration ?? {}) as Record<string, unknown>
+  const cfg = formValues(cred)
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
   const keys = str(cred.key) || str(cfg.keys)
   if (!keys) return null
@@ -104,7 +107,7 @@ export async function registerConnect(d: ConnectDeps): Promise<ConnectRegistrati
         return false
       }
       const cred = (await ctx.integration.connection.resolve(connection)) as CredentialValue
-      const sig = JSON.stringify(cred?.configuration ?? {}) + "|" + (cred?.key ?? "")
+      const sig = JSON.stringify(formValues(cred)) + "|" + (cred?.key ?? "")
       let changed = false
       if (sig !== lastApplied) {
         lastApplied = sig

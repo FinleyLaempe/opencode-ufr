@@ -48,6 +48,7 @@ use it for every manual experiment so a real install is never touched.
 | cached prompt tokens: `usage.prompt_tokens_details.cached_tokens` is reported by glm-5.3-flash, deepseek-v4.1-flash and the OpenAI models; cached reads are **free** on glm and deepseek (portal), OpenAI cache write luna = $0.125/Mtok (declared price confirmed); deepseek bills uncached input = cache writes at $0.025/Mtok, glm $0.10/Mtok | 2026-11-09 |
 | the ~900 req/h pooled model-group wall is gone (README: verified 2026-10-06); not re-tested at higher volume | 2026-10-06 |
 | **off the VPN every path answers `HTTP 200` + HTML "VPN erforderlich"** | 2026-09-28 |
+| off the VPN the front proxy answers requests up to ~0.9 MiB with the VPN page (200) and **bodies over 1 MiB with an HTML `413 Request Entity Too Large`** (921 581 B → 200, 1 126 381 B → 413, unauthenticated POST) — a 413 means "VPN not connected", not "request too large"; no body size limit has been observed on the real route (780 KB bodies passed 2026-11-09) | 2026-11-10 |
 | glm-5.3-flash: input and output (incl. reasoning) $0.10/Mtok, cached reads free (portal-measured; was $0.40 on 2026-09-28, then with no cache discount); glm-5.2 still $0.40, not re-measured | 2026-11-09, portal |
 | no cost or rate-limit headers; streams send a `usage` chunk when `stream_options.include_usage` is set (`cached_tokens` now present, see above) | 2026-11-09 |
 | portal shows spend only as % of $20/day per key, two decimals | 2026-09-28 |

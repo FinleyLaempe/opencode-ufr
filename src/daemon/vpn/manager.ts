@@ -83,7 +83,15 @@ export class VpnManager {
           if (!proxy) throw new Error("the vpn tunnel went down while the request was starting — retry")
           return await fetch(url, { ...init, proxy: `http://127.0.0.1:${proxy.port}` } as RequestInit)
         }
-        return await f(url, init)
+        const res = await f(url, init)
+        // UFR's HTML (the VPN page, a proxy error) on the "direct" path may mean the route
+        // changed since the last check: forget the cached verdict so the next call re-probes
+        // and can fall back to the tunnel instead of repeating the VPN page for up to a minute.
+        if ((res.headers.get("content-type") ?? "").includes("text/html")) {
+          this.directOk = false
+          this.directCheckedAt = 0
+        }
+        return res
       },
     }
   }

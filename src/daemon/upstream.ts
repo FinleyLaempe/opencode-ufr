@@ -73,22 +73,10 @@ export async function callUpstream(o: {
   if (type.includes("text/html")) {
     const html = await res.text()
     if (isVpnPage(html)) return { kind: "unreachable", message: VPN_MESSAGE }
-    // A 4xx HTML page is UFR's proxy refusing this very request (413: body too large), not a
-    // network problem: pass it on as that status so clients stop retrying — a 503 would be retried
-    // forever — and the upstream is not marked down.
-    if (res.status >= 400 && res.status < 500) {
-      const message =
-        res.status === 413
-          ? "UFR's proxy rejected the request as too large (HTTP 413) — the conversation or its attachments exceed UFR's request size limit; compact the context or start a new session"
-          : `UFR's proxy answered HTTP ${res.status} with an HTML page instead of JSON`
-      return {
-        kind: "error",
-        status: res.status,
-        body: JSON.stringify({ error: { message, type: res.status === 413 ? "request_too_large" : "upstream_html_error", code: res.status } }),
-        contentType: "application/json",
-      }
-    }
-    return { kind: "unreachable", message: `UFR answered with an HTML page (HTTP ${res.status}) instead of JSON` }
+    // Off the VPN, UFR's front proxy answers small requests with the VPN page and anything over
+    // 1 MiB with an HTML 413 (measured 2026-11-10) — so a 413 means "not connected", not "too large".
+    const hint = res.status === 413 ? " — the VPN wall rejects bodies over 1 MiB this way, so the uni VPN is most likely not connected" : ""
+    return { kind: "unreachable", message: `UFR answered with an HTML page (HTTP ${res.status}) instead of JSON${hint}` }
   }
   if (res.ok) return { kind: "ok", response: res }
   const body = await res.text()

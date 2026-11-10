@@ -116,6 +116,20 @@ describe("VpnManager", () => {
     expect(ufr.calls).toEqual([]) // UFR was never probed directly
   })
 
+  test("UFR's HTML on the direct path drops the cached verdict, so the next call re-checks the route", async () => {
+    const o = { type: "json" }
+    const ufr = fakeUfr(o)
+    const m = new VpnManager({ gateway: "https://fortivpn.example", upstreamHost: "x", baseUrl: ufr.url, credentials: NO_CREDENTIALS, log: LOG })
+    expect(await m.ensurePath()).toBe("direct")
+    const probes = () => ufr.calls.filter((p) => p.endsWith("/models")).length
+    expect(probes()).toBe(1)
+    o.type = "html" // the route changed: UFR now answers with its VPN page
+    const res = await m.transport().fetch(`${ufr.url}/chat/completions`, { method: "POST" })
+    expect(res.headers.get("content-type")).toContain("html")
+    await m.ensurePath()
+    expect(probes()).toBe(2)
+  })
+
   test("a fresh direct check is cached: repeated calls do not re-probe UFR", async () => {
     const ufr = fakeUfr({ type: "json" })
     const m = new VpnManager({ gateway: "https://fortivpn.example", upstreamHost: "x", baseUrl: ufr.url, credentials: NO_CREDENTIALS, log: LOG })
