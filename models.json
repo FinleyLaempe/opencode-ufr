@@ -486,6 +486,10 @@
           "xhigh"
         ]
       }
+    },
+    "nemotron-3.5-super-llmlb": {
+      "context": 262144,
+      "note": "context 262144 probed live 2026-11-11 (probe-all-contexts)"
     }
   }
 }
