@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import type { Transport } from "../../src/daemon/transport"
 import { usageOf } from "../../src/daemon/router"
+import { TEST_MODELS_FILE } from "../support/models"
 import { errorOf, routerEnv } from "../support/router-env"
 
 type Env = ReturnType<typeof routerEnv>
@@ -16,6 +17,48 @@ const GEMMA = "gemma-4-31b-llmlb"
 const MISTRAL = "mistral-small-4-llmlb"
 /** The fake UFR only accepts the keys it was started with — keep pool and fake in sync. */
 const KEYS4 = ["key-a", "key-b", "key-c", "key-d"]
+
+describe("Router, a blocked model", () => {
+  test("403 'Model is blocked' is passed through and does not take the key out of the pool", async () => {
+    const e = setup({ keys: ["key-a"] })
+    e.ufr.blockedModels.add(GEMMA)
+    const blocked = await e.chat({ model: GEMMA })
+    expect(blocked.status).toBe(403)
+    // regression 2026-11-11: this used to mark every key invalid for 10 minutes
+    expect((await e.chat({ model: GLM })).status).toBe(200)
+    expect(e.keys.snapshot().every((k) => !k.invalid)).toBe(true)
+  })
+})
+
+describe("Router, reasoning summary", () => {
+  const withSummary = () => {
+    const file = structuredClone(TEST_MODELS_FILE)
+    file.models["glm-5.2-llmlb"] = { ...file.models["glm-5.2-llmlb"], reasoning: { efforts: ["none", "high"], summary: true } }
+    return setup({ keys: ["key-a"], models: file })
+  }
+  test("a model measured to support it gets reasoning_summary auto once an effort is set", async () => {
+    const e = withSummary()
+    await e.chat({ model: GLM, reasoning_effort: "high" })
+    expect(e.ufr.calls[0]!.body.reasoning_summary).toBe("auto")
+  })
+  test("without an effort nothing is added (UFR returns no summary text then)", async () => {
+    const e = withSummary()
+    await e.chat({ model: GLM })
+    expect(e.ufr.calls[0]!.body.reasoning_summary).toBeUndefined()
+  })
+  test("not with reasoning_effort none, and a client's own value is kept", async () => {
+    const e = withSummary()
+    await e.chat({ model: GLM, reasoning_effort: "none" })
+    await e.chat({ model: GLM, reasoning_effort: "high", reasoning_summary: "detailed" })
+    expect(e.ufr.calls[0]!.body.reasoning_summary).toBeUndefined()
+    expect(e.ufr.calls[1]!.body.reasoning_summary).toBe("detailed")
+  })
+  test("a model without the flag is left alone", async () => {
+    const e = setup({ keys: ["key-a"] })
+    await e.chat({ model: GLM, reasoning_effort: "high" })
+    expect(e.ufr.calls[0]!.body.reasoning_summary).toBeUndefined()
+  })
+})
 
 describe("usageOf", () => {
   test("reads cached and cache-write tokens in the three spellings seen live", () => {

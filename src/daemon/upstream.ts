@@ -89,6 +89,12 @@ export async function callUpstream(o: {
     return { kind: "budget_exhausted", status: res.status, body, spend: m?.[1] ? Number(m[1]) : undefined, limit: m?.[2] ? Number(m[2]) : undefined }
   }
   if (res.status === 429) return { kind: "rate_limited", status: 429, body }
+  // UFR blocks single models with `403 litellm.PermissionDeniedError: Model is blocked` (seen 2026-11-11 on
+  // gemma-4-12b). That says nothing about the key: treating it as auth_invalid took every key out of the
+  // pool for 10 minutes and killed all other models with it.
+  if (res.status === 403 && /Model is blocked|PermissionDeniedError/i.test(body) && /blocked/i.test(body)) {
+    return { kind: "error", status: res.status, body, contentType: type || "application/json" }
+  }
   if (res.status === 401 || res.status === 403) return { kind: "auth_invalid", status: res.status, body }
   if ((res.status === 400 || res.status === 413) && CONTEXT_RE.test(body)) return { kind: "context_overflow", status: res.status, body }
   return { kind: "error", status: res.status, body, contentType: type || "application/json" }

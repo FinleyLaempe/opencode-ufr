@@ -37,3 +37,18 @@ describe("toModelInfo", () => {
     expect((toModelInfo("p", "m", unpriced) as any).cost).toEqual([{ input: 0, output: 0, cache: { read: 0, write: 0 } }])
   })
 })
+
+describe("toModelInfo: reasoning efforts", () => {
+  const base = { name: "M", limit: { context: 1000, output: 100 }, tool_call: true, attachment: false, reasoning: true, temperature: true }
+  test("one variant per effort, each setting reasoning_effort in the request body", () => {
+    const info = toModelInfo("ufr", "m", { ...base, efforts: ["none", "low", "high"] })
+    expect(info.variants).toEqual([
+      { id: "none", headers: {}, body: { reasoning_effort: "none" } },
+      { id: "low", headers: {}, body: { reasoning_effort: "low" } },
+      { id: "high", headers: {}, body: { reasoning_effort: "high" } },
+    ])
+  })
+  test("a stamp from an older gateway without efforts still yields an empty variants array", () => {
+    expect(toModelInfo("ufr", "m", base).variants).toEqual([])
+  })
+})

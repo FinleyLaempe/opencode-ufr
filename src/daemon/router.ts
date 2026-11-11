@@ -417,6 +417,15 @@ export class Router {
       tried.add(k.alias)
       lastKey = k.alias
       const upstreamBody: Record<string, unknown> = { ...body, model }
+      // OpenAI models think without showing it unless asked for a summary: `reasoning_summary: "auto"` makes
+      // UFR's LiteLLM return the reasoning text as reasoning_content (measured 2026-11-09/11). It only has an
+      // effect together with an explicit effort (without one the text stays empty), never with "none" (nothing
+      // to summarize), and a client's own value wins. Models not flagged in models.json never get it: Mistral
+      // answers 422 to the unknown parameter.
+      const effort = body.reasoning_effort
+      if (cat.models.get(model)?.reasoning?.summary && typeof effort === "string" && effort !== "none" && body.reasoning_summary === undefined) {
+        upstreamBody.reasoning_summary = "auto"
+      }
       if (stream) {
         // Only spread a real object — a client sending stream_options as a
         // string (or array) would otherwise be spread into garbage upstream.

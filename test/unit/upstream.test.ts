@@ -76,6 +76,21 @@ describe("callUpstream", () => {
     if (r.kind === "unreachable") expect(r.message).toMatch(/413.*VPN/)
   })
 
+  test("a 403 'Model is blocked' is a per-model error, not an invalid key", async () => {
+    const blocked: Transport = {
+      name: "blocked",
+      fetch: async () => new Response('{"error":{"message":"litellm.PermissionDeniedError: Model is blocked","code":"403"}}', { status: 403, headers: { "content-type": "application/json" } }),
+    }
+    const r = await call({ transport: blocked })
+    expect(r.kind).toBe("error")
+    if (r.kind === "error") expect(r.status).toBe(403)
+  })
+
+  test("any other 403 still marks the key invalid", async () => {
+    const denied: Transport = { name: "denied", fetch: async () => new Response('{"detail":"Forbidden"}', { status: 403, headers: { "content-type": "application/json" } }) }
+    expect((await call({ transport: denied })).kind).toBe("auth_invalid")
+  })
+
   test("a redirect is unreachable but not blamed on the VPN (ruling R12)", async () => {
     const redirecting: Transport = {
       name: "redirecting",

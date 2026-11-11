@@ -10,6 +10,8 @@ export type Model = {
   context: number
   maxOutput: number
   price: ModelPrice | null
+  /** From models.json; undefined = never measured, no effort variants offered. */
+  reasoning?: { efforts: string[]; summary: boolean }
   hasEntry: boolean
   hidden: boolean
 }

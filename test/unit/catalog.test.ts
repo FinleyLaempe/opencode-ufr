@@ -66,8 +66,19 @@ describe("opencodeStamp", () => {
       tool_call: true,
       attachment: true,
       reasoning: false,
+      efforts: [],
       temperature: true,
     })
     expect(opencodeStamp(cat.models.get("mistral-small-4-llmlb")!).cost).toBeUndefined()
+  })
+
+  test("a measured reasoning entry becomes effort variants for opencode", () => {
+    const file = structuredClone(TEST_MODELS_FILE)
+    file.models["glm-5.2-llmlb"] = { ...file.models["glm-5.2-llmlb"], reasoning: { efforts: ["none", "low", "high"], summary: false } }
+    const c = buildCatalog(ufr, file, { allowPaid: false })
+    const s = opencodeStamp(c.models.get("glm-5.2-llmlb")!)
+    expect(s.reasoning).toBe(true)
+    expect(s.efforts).toEqual(["none", "low", "high"])
+    expect(c.models.get("glm-5.2-llmlb")!.reasoning).toEqual({ efforts: ["none", "low", "high"], summary: false })
   })
 })

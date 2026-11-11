@@ -65,6 +65,7 @@ export function buildCatalog(ufr: UfrModel[], file: ModelsFile, opts: { allowPai
       context,
       maxOutput: e?.max_output ?? file.defaults.max_output,
       price: toPrice(e?.price),
+      ...(e?.reasoning ? { reasoning: { efforts: e.reasoning.efforts, summary: e.reasoning.summary ?? false } } : {}),
       hasEntry: e !== undefined,
       hidden: exclude.has(u.id),
     })
@@ -104,12 +105,15 @@ export type OpencodeStamp = {
   tool_call: boolean
   attachment: boolean
   reasoning: boolean
+  /** reasoning_effort values to offer as variants (empty = none). */
+  efforts?: string[]
   temperature: boolean
 }
 
 /**
- * What the plugin needs per model. reasoning=false for every UFR route
- * (measured reasoning_effort inert upstream); temperature is accepted everywhere.
+ * What the plugin needs per model. `reasoning`/`efforts` come from the measured
+ * models.json entry (reasoning_effort works upstream since 2026-11-11); temperature
+ * is accepted everywhere.
  */
 export function opencodeStamp(m: Model): OpencodeStamp {
   const s: OpencodeStamp = {
@@ -117,7 +121,8 @@ export function opencodeStamp(m: Model): OpencodeStamp {
     limit: { context: m.context, output: m.maxOutput },
     tool_call: m.tools,
     attachment: m.vision,
-    reasoning: false,
+    reasoning: (m.reasoning?.efforts.length ?? 0) > 0,
+    efforts: m.reasoning?.efforts ?? [],
     temperature: true,
   }
   if (m.price) s.cost = { input: m.price.input, output: m.price.output, cache_read: m.price.cacheRead, cache_write: m.price.cacheWrite }

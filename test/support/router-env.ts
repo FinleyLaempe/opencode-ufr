@@ -12,7 +12,7 @@ import { FakeUfr, type FakeUfrOptions } from "./fake-ufr"
 import { TEST_MODELS_FILE, UFR_RAW_MODELS } from "./models"
 
 /** A Router wired to a fake UFR and a fake clock; sleeps advance the clock instantly. */
-export function routerEnv(o: { keys?: string[]; config?: Record<string, unknown>; ufr?: FakeUfrOptions; transport?: Transport } = {}) {
+export function routerEnv(o: { keys?: string[]; config?: Record<string, unknown>; ufr?: FakeUfrOptions; transport?: Transport; models?: typeof TEST_MODELS_FILE } = {}) {
   const ufr = FakeUfr.start({ ...o.ufr })
   const clock = new FakeClock(Date.now())
   const config: Config = mergeConfig({ ...o.config, upstream: { baseUrl: ufr.baseUrl, requestTimeoutS: 10 } })
@@ -32,7 +32,7 @@ export function routerEnv(o: { keys?: string[]; config?: Record<string, unknown>
     probeTimeoutMs: config.breaker.probeTimeoutS * 1000,
     now: clock.now,
   })
-  const catalog = buildCatalog(parseUfrModels(UFR_RAW_MODELS), TEST_MODELS_FILE, { allowPaid: config.allowPaid })
+  const catalog = buildCatalog(parseUfrModels(UFR_RAW_MODELS), o.models ?? TEST_MODELS_FILE, { allowPaid: config.allowPaid })
   const stats = new Stats(":memory:")
   const meter = new ThroughputMeter({ now: clock.now, horizonMs: 60_000 })
   const sleeps: number[] = []

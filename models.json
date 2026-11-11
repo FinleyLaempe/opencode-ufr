@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-09",
+  "updated": "2026-11-11",
   "defaults": {
     "context": 131072,
     "max_output": 16384
@@ -43,7 +43,17 @@
         "output": 0.1,
         "cache_read": 0
       },
-      "note": "portal-measured 2026-11-09 (direct probe key): 1.05M uncached input tokens = 0.53% of $20 (= $0.10/Mtok); 944k cached_tokens in a following run cost nothing (cached reads free)"
+      "note": "portal-measured 2026-11-09 (direct probe key): 1.05M uncached input tokens = 0.53% of $20 (= $0.10/Mtok); 944k cached_tokens in a following run cost nothing (cached reads free) | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
     },
     "gemma-4-31b-llmlb": {
       "context": 262144
@@ -58,7 +68,14 @@
       "context": 128000
     },
     "mistral-small-4-llmlb": {
-      "context": 256000
+      "context": 256000,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "high"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "qwen-3.5-397b-llmlb": {
       "context": 1048576,
@@ -72,7 +89,16 @@
       "context": 262144
     },
     "qwen-3.8-27b-llmlb": {
-      "context": 262144
+      "context": 262144,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "xhigh"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "qwen3.5-9b-llmlb": {
       "context": 128000
@@ -107,13 +133,46 @@
     },
     "ufr/chat": {
       "context": 262144,
-      "vision": true
+      "vision": true,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "ufr/chat-fast": {
-      "context": 131044
+      "context": 131044,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "ufr/chat-standard": {
-      "context": 262144
+      "context": 262144,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "ufr/coding-complex": {
       "context": 1048576,
@@ -123,11 +182,30 @@
         "output": 0.1,
         "cache_read": 0
       },
-      "note": "same backend as glm-5.3-flash-llmlb: portal-measured 2026-11-09 (direct probe key): 1.05M uncached input tokens = 0.53% of $20 (= $0.10/Mtok); 944k cached_tokens in a following run cost nothing (cached reads free)"
+      "note": "same backend as glm-5.3-flash-llmlb: portal-measured 2026-11-09 (direct probe key): 1.05M uncached input tokens = 0.53% of $20 (= $0.10/Mtok); 944k cached_tokens in a following run cost nothing (cached reads free) | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
     },
     "ufr/coding-fast": {
       "context": 262144,
-      "vision": true
+      "vision": true,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "xhigh"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "ufr/reasoning-complex": {
       "context": 1048576,
@@ -136,13 +214,37 @@
         "output": 0.025,
         "cache_read": 0
       },
-      "note": "same backend as deepseek-v4.1-flash-llmlb: portal-measured 2026-11-09 (direct probe key): 3.87M uncached input tokens (all billed as cache writes) = 0.48% of $20 (= $0.025/Mtok, writes at input price); 3.63M cached_tokens in a following run cost nothing (cached reads free)"
+      "note": "same backend as deepseek-v4.1-flash-llmlb: portal-measured 2026-11-09 (direct probe key): 3.87M uncached input tokens (all billed as cache writes) = 0.48% of $20 (= $0.025/Mtok, writes at input price); 3.63M cached_tokens in a following run cost nothing (cached reads free) | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "high",
+          "xhigh"
+        ]
+      }
     },
     "ufr/reasoning-fast": {
-      "context": 262144
+      "context": 262144,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "xhigh"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "ufr/text": {
-      "context": 256000
+      "context": 256000,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "high"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "ufr/vision-complex": {
       "context": 262144,
@@ -151,13 +253,45 @@
         "input": 0.025,
         "output": 0.025
       },
-      "note": "context 262144 probed live 2026-10-05 (probe-all-contexts); price $0.025/Mtok from the UFR portal price table 2026-11-08 (DeepSeek V4.1 Flash), not portal-measured; usage reports no cached_tokens (2026-11-08), cache price unknown"
+      "note": "context 262144 probed live 2026-10-05 (probe-all-contexts); price $0.025/Mtok from the UFR portal price table 2026-11-08 (DeepSeek V4.1 Flash), not portal-measured; usage reports no cached_tokens (2026-11-08), cache price unknown | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
     },
     "ufr/vision-fast": {
-      "context": 131044
+      "context": 131044,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "ufr/vision-standard": {
-      "context": 262144
+      "context": 262144,
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "note": "reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)"
     },
     "openai/gpt-5.6-llmlb": {
       "context": 1050000,
@@ -214,7 +348,17 @@
         "cache_read": 0.1,
         "cache_write": 2.5
       },
-      "note": "context/max_output from OpenAI's model page (2026-10-07), not probed at UFR"
+      "note": "context/max_output from OpenAI's model page (2026-10-07), not probed at UFR | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key); reasoning_summary:\"auto\" returns the reasoning text (no effort -> no text)",
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "summary": true
+      }
     },
     "openai/gpt-6.1-terra-llmlb": {
       "max_output": 128000,
@@ -224,7 +368,18 @@
         "cache_read": 0.1,
         "cache_write": 1.25
       },
-      "note": "in/out from the UFR portal price table 2026-11-08; cache_read/cache_write use OpenAI's ratios (0.1x / 1.25x); luna cache write measured 2026-11-09 at $0.125/Mtok (= declared); context not probed. cached_tokens and cache_write_tokens reported"
+      "note": "in/out from the UFR portal price table 2026-11-08; cache_read/cache_write use OpenAI's ratios (0.1x / 1.25x); luna cache write measured 2026-11-09 at $0.125/Mtok (= declared); context not probed. cached_tokens and cache_write_tokens reported | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key); reasoning_summary:\"auto\" returns the reasoning text (no effort -> no text)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "summary": true
+      }
     },
     "openai/gpt-6-luna-llmlb": {
       "context": 1050000,
@@ -235,7 +390,18 @@
         "cache_read": 0.01,
         "cache_write": 0.125
       },
-      "note": "context/max_output from OpenAI's model page (2026-10-07), not probed at UFR"
+      "note": "context/max_output from OpenAI's model page (2026-10-07), not probed at UFR | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key); reasoning_summary:\"auto\" returns the reasoning text (no effort -> no text)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "summary": true
+      }
     },
     "openai/gpt-5.3-codex-llmlb": {
       "context": 1000000,
@@ -259,7 +425,16 @@
         "input": 0.68,
         "output": 2.09
       },
-      "note": "price from the UFR portal price table (Mistral 4 Large) 2026-11-08; context not probed"
+      "note": "price from the UFR portal price table (Mistral 4 Large) 2026-11-08; context not probed | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)",
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
     },
     "mistral/codestral-latest-llmlb": {
       "context": 128000,
@@ -276,15 +451,41 @@
         "output": 0.025,
         "cache_read": 0
       },
-      "note": "context 1048576 probed live 2026-10-02 (vLLM ContextWindowExceededError named the limit); portal-measured 2026-11-09 (direct probe key): 3.87M uncached input tokens (all billed as cache writes) = 0.48% of $20 (= $0.025/Mtok, writes at input price); 3.63M cached_tokens in a following run cost nothing (cached reads free)"
+      "note": "context 1048576 probed live 2026-10-02 (vLLM ContextWindowExceededError named the limit); portal-measured 2026-11-09 (direct probe key): 3.87M uncached input tokens (all billed as cache writes) = 0.48% of $20 (= $0.025/Mtok, writes at input price); 3.63M cached_tokens in a following run cost nothing (cached reads free) | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "high",
+          "xhigh"
+        ]
+      }
     },
     "kolibri-1-llmlb": {
       "context": 262144,
-      "note": "context 262144 probed live 2026-10-05 (probe-all-contexts)"
+      "note": "context 262144 probed live 2026-10-05 (probe-all-contexts) | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
     },
     "qwen-3.8-flash-next-llmlb": {
       "context": 262144,
-      "note": "context 262144 probed live 2026-11-02 (probe-all-contexts)"
+      "note": "context 262144 probed live 2026-11-02 (probe-all-contexts) | reasoning efforts = the reasoning_effort values UFR answered 200 for, measured 2026-11-11 (sweep, one key)",
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "xhigh"
+        ]
+      }
     }
   }
 }

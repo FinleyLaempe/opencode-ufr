@@ -7,6 +7,12 @@ export type ModelEntry = {
   vision?: boolean
   tools?: boolean
   price?: Price
+  /**
+   * Measured reasoning behaviour. `efforts` are the `reasoning_effort` values UFR accepted
+   * for this model (opencode shows them as selectable variants); `summary` means
+   * `reasoning_summary: "auto"` makes the model return its reasoning text.
+   */
+  reasoning?: { efforts: string[]; summary?: boolean }
   note?: string
 }
 
@@ -53,6 +59,13 @@ export function validateModelsFile(x: unknown): ModelsFile {
     if (m.vision !== undefined && typeof m.vision !== "boolean") fail(`${p}.vision`, "must be true or false")
     if (m.tools !== undefined && typeof m.tools !== "boolean") fail(`${p}.tools`, "must be true or false")
     if (m.note !== undefined && typeof m.note !== "string") fail(`${p}.note`, "must be a string")
+    if (m.reasoning !== undefined) {
+      const r = m.reasoning
+      if (!isObj(r) || !Array.isArray(r.efforts) || r.efforts.length === 0 || !r.efforts.every((e) => typeof e === "string" && /^[a-z]{3,10}$/.test(e))) {
+        fail(`${p}.reasoning.efforts`, "must be a non-empty list of effort names like \"low\" or \"high\"")
+      }
+      if (r.summary !== undefined && typeof r.summary !== "boolean") fail(`${p}.reasoning.summary`, "must be true or false")
+    }
     if (m.price !== undefined) {
       const pr = m.price
       if (!isObj(pr) || !nonNeg(pr.input) || !nonNeg(pr.output)) fail(`${p}.price`, "needs non-negative input and output (USD per 1M tokens)")

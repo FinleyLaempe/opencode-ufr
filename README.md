@@ -128,6 +128,7 @@ old fixed pause between probe calls is gone, the key pool paces instead.
 - Runs a circuit breaker per model: after repeated failures it backs off from
   30 s up to 60 minutes before probing again, instead of hammering a walled
   model.
+- Offers the measured `reasoning_effort` values of each model as selectable variants in opencode (cycle them with the variant key). For the OpenAI models it also asks UFR for a reasoning summary (`reasoning_summary: "auto"`) once an effort is chosen, so the reasoning text shows up; without a chosen effort OpenAI returns only token counts.
 - Falls back, when a model is rate-limited or walled, only to models listed
   in `free_escape_order` (in `models.json`), in that order — and never to
   UFR's external (paid-tier) models unless you set `allowPaid`. Some "local"

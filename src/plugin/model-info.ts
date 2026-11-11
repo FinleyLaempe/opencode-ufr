@@ -18,8 +18,9 @@ export function toModelInfo(providerID: string, id: string, s: Omit<OpencodeStam
     // release dates; 0 means unknown and keeps the sort deterministic.
     time: { released: 0 },
     // Required as an array even when empty: one entry without variants makes the
-    // server reject the whole /model list, and the picker shows nothing.
-    variants: [],
+    // server reject the whole /model list, and the picker shows nothing. One variant
+    // per measured reasoning_effort value: opencode merges `body` into the request.
+    variants: (s.efforts ?? []).map((effort) => ({ id: effort, headers: {}, body: { reasoning_effort: effort } })),
     status: "active",
     enabled: true,
     // Always an array with every nested object present: opencode dereferences

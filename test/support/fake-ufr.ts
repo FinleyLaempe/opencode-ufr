@@ -35,6 +35,8 @@ const budget400 = () => new Response(EXCEEDED_BUDGET_BODY, { status: 400, header
 export class FakeUfr {
   calls: FakeCall[] = []
   walled = new Set<string>()
+  /** Models UFR blocks with `403 litellm.PermissionDeniedError: Model is blocked` (gemma-4-12b, 2026-11-11) — says nothing about the key. */
+  blockedModels = new Set<string>()
   rateLimitedKeys = new Set<string>()
   /** Keys over their daily budget: served the real 400 ExceededBudget body before any bucket check. */
   budgetDeadKeys = new Set<string>()
@@ -105,6 +107,9 @@ export class FakeUfr {
       call.aborted = true
     })
 
+    if (this.blockedModels.has(call.model)) {
+      return Response.json({ error: { message: "litellm.PermissionDeniedError: Model is blocked", type: "throttling_error", code: "403" } }, { status: 403 })
+    }
     const walledNow = this.walled.has(call.model) || (this.wallAfterFirst.has(call.model) && priorCallsToModel >= 1)
     if (this.budgetDeadKeys.has(key)) return budget400() // before the bucket check: a dead key stays dead
     if (this.rateLimitedKeys.has(key) || walledNow) return text429()
