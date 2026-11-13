@@ -1,7 +1,8 @@
 /**
  * The one door scripts knock on: a connection to the local opencode-ufr
  * gateway. Every model call made through here rides the gateway's central
- * key rotation and soft rate limiting — the caller waits for a key slot
+ * key pool (keys drain in order, one until it is spent, then the next) and
+ * soft rate limiting — the caller waits for a key slot
  * instead of being told to back off, and never has to pace itself with
  * artificial sleeps. Two primitives:
  *

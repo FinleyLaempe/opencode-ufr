@@ -26,7 +26,7 @@ Options: `--workers N` (0 = auto-tune, default), `--dpi 300`, `--no-dedup`, `--d
 
 ## Notes
 
-- Every model call goes through the local opencode-ufr gateway, which rotates keys and paces requests automatically — **never add artificial sleeps between runs**; parallelism is handled and safe.
+- Every model call goes through the local opencode-ufr gateway, which drains keys in order (one until it is spent, then the next) and paces requests automatically — **never add artificial sleeps between runs**; parallelism is handled and safe.
 - The first run with > 2 pages auto-tunes concurrency with a few lightweight probe requests.
 - Progress and page logs go to stderr; only the final markdown goes to stdout/the output file.
 - The script needs the gateway running (it starts one automatically if the plugin is installed); model availability depends on the Uni Freiburg connection like every other UFR model.

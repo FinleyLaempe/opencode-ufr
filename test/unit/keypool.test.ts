@@ -11,18 +11,30 @@ const mk = (c: FakeClock, n = 3, cap = 18, maxWaitMs = 60_000) =>
 const alias = (r: ReturnType<KeyPool["acquire"]>) => (r.kind === "ok" ? r.alias : `none:${r.reason}`)
 
 describe("KeyPool", () => {
-  test("sequential requests rotate over every key", () => {
+  test("requests drain key 1 before touching key 2", () => {
     const c = new FakeClock()
     const p = mk(c)
-    const seen = new Set([alias(p.acquire()), alias(p.acquire()), alias(p.acquire())])
-    expect(seen).toEqual(new Set(["k1", "k2", "k3"]))
+    expect(alias(p.acquire())).toBe("k1")
+    expect(alias(p.acquire())).toBe("k1")
+    expect(alias(p.acquire())).toBe("k1")
   })
 
-  test("prefers the key with the most headroom", () => {
+  test("a drained key hands over to the next, and takes over again after the reset", () => {
     const c = new FakeClock()
     const p = mk(c, 2)
-    for (let i = 0; i < 5; i++) expect(alias(p.acquire(new Set(["k2"])))).toBe("k1")
+    p.onBudgetExhausted("k1")
     expect(alias(p.acquire())).toBe("k2")
+    expect(alias(p.acquire())).toBe("k2")
+    c.advance(24 * 3_600_000) // the 02:00 reset has passed
+    expect(alias(p.acquire())).toBe("k1")
+  })
+
+  test("a full key hands over to the next key", () => {
+    const c = new FakeClock()
+    const p = mk(c, 2, 2)
+    p.acquire() // k1: 1/2
+    p.acquire() // k1: 2/2
+    expect(alias(p.acquire())).toBe("k2") // k1's window is full → next key
   })
 
   test("a full key queues until its oldest request is one window old", () => {
@@ -71,24 +83,24 @@ describe("KeyPool", () => {
     expect(p.snapshot()[0]!.blockedForMs).toBe(60_000)
   })
 
-  test("a budget block lasts until the next local midnight, then the key is usable again", () => {
+  test("a budget block lasts until the next 02:00, then the key is usable again", () => {
     const c = new FakeClock()
     c.t = new Date(2026, 9, 7, 14, 30).getTime() // mid-day local
     const p = mk(c, 1)
     p.onBudgetExhausted("k1")
-    const midnight = new Date(2026, 9, 8).getTime()
-    expect(p.snapshot()[0]!.blockedForMs).toBe(midnight - c.t)
+    const reset = new Date(2026, 9, 8, 2).getTime() // next 02:00 local
+    expect(p.snapshot()[0]!.blockedForMs).toBe(reset - c.t)
     expect(p.snapshot()[0]!.blockedBy).toBe("budget")
     expect(alias(p.acquire())).toBe("none:exhausted")
-    c.advance(midnight - c.t)
+    c.advance(reset - c.t)
     expect(p.snapshot()[0]!.blockedForMs).toBe(0)
     expect(p.snapshot()[0]!.blockedBy).toBeNull()
     expect(alias(p.acquire())).toBe("k1")
   })
 
-  test("a budget block set exactly at midnight runs to the following midnight", () => {
+  test("a budget block set exactly at the reset time runs to the following reset", () => {
     const c = new FakeClock()
-    c.t = new Date(2026, 9, 8).getTime() // local midnight
+    c.t = new Date(2026, 9, 8, 2).getTime() // 02:00 local
     const p = mk(c, 1)
     p.onBudgetExhausted("k1")
     expect(p.snapshot()[0]!.blockedForMs).toBe(24 * 3_600_000)
@@ -101,8 +113,8 @@ describe("KeyPool", () => {
     p.onBudgetExhausted("k1", 24.0425389, 20.0)
     expect(p.snapshot()[0]).toMatchObject({ blockedBy: "budget", budgetSpend: 24.0425389, budgetLimit: 20.0 })
     // Stale display values must not outlive the block (same rule as blockedBy).
-    const midnight = new Date(2026, 9, 8).getTime()
-    c.advance(midnight - c.t)
+    const reset = new Date(2026, 9, 8, 2).getTime()
+    c.advance(reset - c.t)
     const s = p.snapshot()[0]!
     expect(s.blockedBy).toBeNull()
     expect(s.budgetSpend).toBeUndefined()

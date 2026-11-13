@@ -111,7 +111,7 @@ table merging finish the document. opencode's agent loads the skill on its
 own when you ask it to convert a PDF — you never run anything by hand.
 
 Every model call goes through the gateway's relay (`POST /v1/_relay`): the
-same central key rotation and soft rate limiting as chat. Pages run with up
+same central key draining and soft rate limiting as chat. Pages run with up
 to 16 parallel workers (auto-tuned), the key pool queues them and waits for
 a free slot — nothing hammers UFR. The relay is also usable by your own
 scripts (`src/client/gateway.ts`), and the context probe uses it too: the

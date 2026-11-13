@@ -1,4 +1,4 @@
-import { startOfLocalDay } from "../shared/time"
+import { startOfUfrDay } from "../shared/time"
 import { SlidingWindow } from "./window"
 
 export type KeyInfo = { alias: string; secret: string }
@@ -36,7 +36,6 @@ type Slot = KeyInfo & {
 
 export class KeyPool {
   private readonly slots: Slot[]
-  private rr = 0
 
   constructor(
     keys: KeyInfo[],
@@ -74,9 +73,10 @@ export class KeyPool {
 
     const ready = usable.filter((s) => this.availableAt(s) <= now)
     if (ready.length > 0) {
-      const best = Math.max(...ready.map((s) => s.window.headroom()))
-      const tied = ready.filter((s) => s.window.headroom() === best)
-      const pick = tied[this.rr++ % tied.length]!
+      // Drain-first: keys are used strictly in list order — key 1 until it is
+      // drained or blocked, then key 2, and so on. No round-robin: spreading
+      // requests evenly only spends every key's daily budget at the same pace.
+      const pick = ready[0]!
       const r = pick.window.reserve()
       return { kind: "ok", alias: pick.alias, secret: pick.secret, waitMs: 0, at: r.at }
     }
@@ -123,20 +123,20 @@ export class KeyPool {
   /**
    * UFR's daily-budget error (the `budget_exceeded` marker 429, or the 400
    * `ExceededBudget` body since 2026-10-07) means this key's $ cap is spent for
-   * the day: block it until the next local midnight — UFR's own reset time is
-   * unknown, and midnight is the same assumption the spend-today stats already
-   * make. A bucket 429 carries the identical body (2026-10-07), so a merely
-   * rate-limited key can end up budget-blocked; that only costs until midnight
-   * and is safe. Never shortens an existing block. When UFR's body named the
-   * numbers, they are kept for the display — and expire with the block.
+   * the day: block it until the next 02:00 local — UFR's limits reset then
+   * (confirmed 2026-11-13; previously assumed midnight). A bucket 429 carries
+   * the identical body (2026-10-07), so a merely rate-limited key can end up
+   * budget-blocked; that only costs until 02:00 and is safe. Never shortens an
+   * existing block. When UFR's body named the numbers, they are kept for the
+   * display — and expire with the block.
    */
   onBudgetExhausted(alias: string, spend?: number, limit?: number): void {
     const s = this.find(alias)
     if (!s) return
     const now = this.o.now()
-    // startOfLocalDay(now) at exactly midnight would be now itself — +24h always
+    // startOfUfrDay(now) at exactly 02:00 would be now itself — +24h always
     // lands in the future, so the block can never be already expired.
-    s.blockedUntil = Math.max(s.blockedUntil, startOfLocalDay(now) + 24 * 3_600_000)
+    s.blockedUntil = Math.max(s.blockedUntil, startOfUfrDay(now) + 24 * 3_600_000)
     s.blockedBy = "budget"
     s.budgetSpend = spend
     s.budgetLimit = limit

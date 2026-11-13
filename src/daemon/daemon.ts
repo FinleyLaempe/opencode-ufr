@@ -8,7 +8,7 @@ import type { Paths } from "../shared/paths"
 import type { SecretStore } from "../shared/secrets"
 import { VPN_PASS, VPN_USER } from "../shared/secrets"
 import { sleep } from "../shared/sleep"
-import { startOfLocalDay } from "../shared/time"
+import { startOfUfrDay } from "../shared/time"
 import { VERSION } from "../shared/version"
 import { type BreakerState, BreakerRegistry } from "./breaker"
 import { type Catalog, EMPTY_CATALOG, buildCatalog, listModels } from "./catalog"
@@ -424,7 +424,7 @@ export async function startDaemon(o: DaemonOptions): Promise<RunningDaemon> {
       breakers: breakers.states(),
       catalog: { ...catalogInfo, models: catalog.models.size, warnings: catalog.warnings },
       vpn: vpn ? { mode: vpn.status.mode, detail: vpn.status.detail } : null,
-      spendToday: db.spendByKeySince(startOfLocalDay(now())),
+      spendToday: db.spendByKeySince(startOfUfrDay(now())),
       dailyBudgetUsd: config.dailyBudgetUsd,
       rates: ratesSnapshot(),
     })
