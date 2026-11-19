@@ -36,6 +36,7 @@ type Slot = KeyInfo & {
 
 export class KeyPool {
   private readonly slots: Slot[]
+  private rr = 0
 
   constructor(
     keys: KeyInfo[],
@@ -73,10 +74,10 @@ export class KeyPool {
 
     const ready = usable.filter((s) => this.availableAt(s) <= now)
     if (ready.length > 0) {
-      // Drain-first: keys are used strictly in list order — key 1 until it is
-      // drained or blocked, then key 2, and so on. No round-robin: spreading
-      // requests evenly only spends every key's daily budget at the same pace.
-      const pick = ready[0]!
+      // Spread requests: among the keys with the most headroom, rotate per request.
+      const best = Math.max(...ready.map((s) => s.window.headroom()))
+      const tied = ready.filter((s) => s.window.headroom() === best)
+      const pick = tied[this.rr++ % tied.length]!
       const r = pick.window.reserve()
       return { kind: "ok", alias: pick.alias, secret: pick.secret, waitMs: 0, at: r.at }
     }

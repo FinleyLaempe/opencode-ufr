@@ -11,30 +11,28 @@ const mk = (c: FakeClock, n = 3, cap = 18, maxWaitMs = 60_000) =>
 const alias = (r: ReturnType<KeyPool["acquire"]>) => (r.kind === "ok" ? r.alias : `none:${r.reason}`)
 
 describe("KeyPool", () => {
-  test("requests drain key 1 before touching key 2", () => {
+  test("sequential requests rotate over every key", () => {
     const c = new FakeClock()
     const p = mk(c)
-    expect(alias(p.acquire())).toBe("k1")
-    expect(alias(p.acquire())).toBe("k1")
-    expect(alias(p.acquire())).toBe("k1")
+    const seen = new Set([alias(p.acquire()), alias(p.acquire()), alias(p.acquire())])
+    expect(seen).toEqual(new Set(["k1", "k2", "k3"]))
   })
 
-  test("a drained key hands over to the next, and takes over again after the reset", () => {
+  test("prefers the key with the most headroom", () => {
+    const c = new FakeClock()
+    const p = mk(c, 2)
+    for (let i = 0; i < 5; i++) expect(alias(p.acquire(new Set(["k2"])))).toBe("k1")
+    expect(alias(p.acquire())).toBe("k2")
+  })
+
+  test("a budget-blocked key is skipped and takes over again after the reset", () => {
     const c = new FakeClock()
     const p = mk(c, 2)
     p.onBudgetExhausted("k1")
     expect(alias(p.acquire())).toBe("k2")
     expect(alias(p.acquire())).toBe("k2")
-    c.advance(24 * 3_600_000) // the 02:00 reset has passed
-    expect(alias(p.acquire())).toBe("k1")
-  })
-
-  test("a full key hands over to the next key", () => {
-    const c = new FakeClock()
-    const p = mk(c, 2, 2)
-    p.acquire() // k1: 1/2
-    p.acquire() // k1: 2/2
-    expect(alias(p.acquire())).toBe("k2") // k1's window is full → next key
+    c.advance(24 * 3_600_000)
+    expect(new Set([alias(p.acquire()), alias(p.acquire())])).toEqual(new Set(["k1", "k2"]))
   })
 
   test("a full key queues until its oldest request is one window old", () => {
