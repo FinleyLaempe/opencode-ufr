@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-11",
+  "updated": "2026-11-13",
   "defaults": {
     "context": 131072,
     "max_output": 16384
@@ -490,6 +490,10 @@
     "nemotron-3.5-super-llmlb": {
       "context": 262144,
       "note": "context 262144 probed live 2026-11-11 (probe-all-contexts)"
+    },
+    "standard-chat-neu": {
+      "context": 262144,
+      "note": "context 262144 probed live 2026-11-13 (probe-all-contexts)"
     }
   }
 }
